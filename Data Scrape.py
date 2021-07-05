@@ -54,7 +54,7 @@ for video_link in videos:
         
         yt.streams.filter(only_audio=True).first().download(f'{folder}/{name}')
         
-        os.rename(f"{folder}/{name}/{os.listdir(f'{folder}/{name}')[0]}", f'{folder}/{i}.mp3')
+        os.rename(f"{folder}/{name}/{os.listdir(f'{folder}/{name}')[0]}", f'{folder}/Audio Full/{i}.mp3')
         os.rmdir(f'{folder}/{name}')
     
     sleep(randint(1, 3))
