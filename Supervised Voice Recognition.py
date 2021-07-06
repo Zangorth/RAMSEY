@@ -15,9 +15,19 @@ con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   
 query = 'SELECT * FROM RAMSEY.dbo.metadata'
 panda = pd.read_sql(query, con)
+
+hogan = pd.read_sql("SELECT id FROM RAMSEY.dbo.metadata WHERE keywords LIKE '%hogan%'", con)['id'].tolist()
+cruze = pd.read_sql("SELECT id FROM RAMSEY.dbo.metadata WHERE keywords LIKE '%cruze%'", con)['id'].tolist()
+
 con.close()
 
-samples = panda.sample(2, random_state=52)['id'].tolist()
+samples = panda.sample(20, random_state=264)['id'].tolist()
+
+coleman = [4, 5, 21, 46, 53, 59, 83, 114]
+deloney = [8, 59, 80, 114, 124, 130, 139, 149]
+wright = [9, 19, 20, 103, 106]
+ao = [21, 35, 71, 77, 83, 102, 115, 124, 130]
+
 
 panda = pd.DataFrame(columns = ['id', 'cut', 'speaker'] + [i for i in range(193)])
 
@@ -46,6 +56,7 @@ for sample in samples:
         tonnetz = np.mean(librosa.feature.tonnetz(y=librosa.effects.harmonic(y), sr=rate).T,axis=0)
         
         features = list(mfccs) + list(chroma) + list(mel) + list(contrast) + list(tonnetz)
+        features = [float(f) for f in features]
         features = [sample, cut, speaker] + features
         
         app = pd.DataFrame(features).T
@@ -64,4 +75,4 @@ con = urllib.parse.quote_plus(conn_str)
 
 engine = create_engine(f'mssql+pyodbc:///?odbc_connect={con}')
 
-panda.to_sql(name='AudioTraining', con=engine, schema='dbo', if_exists='replace', index=False)
+panda.to_sql(name='AudioTraining', con=engine, schema='dbo', if_exists='append', index=False)
