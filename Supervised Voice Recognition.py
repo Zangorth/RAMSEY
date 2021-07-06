@@ -23,18 +23,23 @@ con.close()
 
 samples = panda.sample(20, random_state=264)['id'].tolist()
 
-coleman = [4, 5, 21, 46, 53, 59, 83, 114]
+coleman = [4, 5, 21, 46, 53, 59, 83, 114, 307, 358, 359]
 deloney = [8, 59, 80, 114, 124, 130, 139, 149]
-wright = [9, 19, 20, 103, 106]
+wright = [9, 19, 20, 103, 106, 261, 276, 321]
 ao = [21, 35, 71, 77, 83, 102, 115, 124, 130]
+cruze = [315] + cruze
+hogan = [336, 337, 339, 343, 347] + hogan
 
+samples = hogan[0:8] + cruze[0:8] + coleman + deloney + wright + ao + samples
+
+samples = [261, 276, 307, 315, 321, 336, 337, 339, 343, 347, 358, 359]
 
 panda = pd.DataFrame(columns = ['id', 'cut', 'speaker'] + [i for i in range(193)])
 
 for sample in samples:
     sound = AudioSegment.from_file(f'C:\\Users\\Samuel\\Audio\\Audio Full\\{sample}.mp3')
 
-    for i in range(0, 5):
+    for i in range(0, 10):
         cut = randint(0, len(sound)-3000)
         out = sound[cut:cut+3000]
         out.export(f'C:\\Users\\Samuel\\Audio\\Audio Segment\\{sample} {cut}.wav', format='wav')
