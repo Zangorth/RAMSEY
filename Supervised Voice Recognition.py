@@ -32,8 +32,6 @@ hogan = [336, 337, 339, 343, 347] + hogan
 
 samples = hogan[0:8] + cruze[0:8] + coleman + deloney + wright + ao + samples
 
-samples = [261, 276, 307, 315, 321, 336, 337, 339, 343, 347, 358, 359]
-
 panda = pd.DataFrame(columns = ['id', 'cut', 'speaker'] + [i for i in range(193)])
 
 for sample in samples:
