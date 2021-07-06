@@ -1,3 +1,4 @@
+from sqlalchemy import create_engine
 from pydub.playback import play
 from pydub import AudioSegment
 from random import randint
@@ -5,6 +6,7 @@ import pyodbc as sql
 import pandas as pd
 import numpy as np
 import librosa
+import urllib
 
 
 con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
@@ -15,9 +17,9 @@ query = 'SELECT * FROM RAMSEY.dbo.metadata'
 panda = pd.read_sql(query, con)
 con.close()
 
-panda = pd.DataFrame(columns = ['id', 'cut', 'speaker'] + [i for i in range(193)])
-
 samples = panda.sample(2, random_state=52)['id'].tolist()
+
+panda = pd.DataFrame(columns = ['id', 'cut', 'speaker'] + [i for i in range(193)])
 
 for sample in samples:
     sound = AudioSegment.from_file(f'C:\\Users\\Samuel\\Audio\\Audio Full\\{sample}.mp3')
@@ -50,3 +52,16 @@ for sample in samples:
         app.columns = ['id', 'cut', 'speaker'] + [i for i in range(193)]
         
         panda = panda.append(app, ignore_index=True, sort=False)
+        
+        
+conn_str = (
+    r'Driver={SQL Server};'
+    r'Server=ZANGORTH\HOMEBASE;'
+    r'Database=RAMSEY;'
+    r'Trusted_Connection=yes;'
+)
+con = urllib.parse.quote_plus(conn_str)
+
+engine = create_engine(f'mssql+pyodbc:///?odbc_connect={con}')
+
+panda.to_sql(name='AudioTraining', con=engine, schema='dbo', if_exists='replace', index=False)
