@@ -1,7 +1,9 @@
+from sklearn.metrics import roc_auc_score, accuracy_score, f1_score
 from sklearn import preprocessing
 import pyodbc as sql
 from torch import nn
 import pandas as pd
+import numpy as np
 import torch
 
 class Discriminator(nn.Module):
@@ -36,6 +38,7 @@ con.close()
 
 panda['y'] = panda['speaker'].astype('category').cat.codes
 mapped = panda[['y', 'speaker']].drop_duplicates().reset_index(drop=True)
+mapped = mapped.sort_values('y')
 
 y = torch.from_numpy(panda['y'].to_numpy())
 x = panda.drop(['id', 'cut', 'speaker', 'y'], axis=1)
@@ -51,7 +54,7 @@ loss_function = nn.CrossEntropyLoss()
 discriminator = Discriminator()
 optim = torch.optim.Adam(discriminator.parameters(), lr=0.01)
 
-for epoch in range(5):
+for epoch in range(20):
     print(epoch)
     for i, (inputs, targets) in enumerate(train_loader):
         discriminator.zero_grad()
@@ -61,4 +64,8 @@ for epoch in range(5):
         optim.step()
         
     test_hat = discriminator(x.float())
+    
+    auc = roc_auc_score(y, test_hat.detach().numpy(), multi_class='ovr')
+    accuracy = accuracy_score(y, np.argmax(test_hat.detach().numpy(), axis=1))
+    mapped['f1'] = f1_score(y, np.argmax(test_hat.detach().numpy(), axis=1), average=None)
     
