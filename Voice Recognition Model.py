@@ -1,4 +1,4 @@
-from sklearn.metrics import roc_auc_score, accuracy_score, f1_score
+from sklearn.metrics import f1_score, recall_score, accuracy_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn import preprocessing
 from skopt import plots
@@ -128,46 +128,14 @@ for train_index, test_index in kf.split(x, y):
     test_hat = discriminator(x_test.float())    
     f1.append(f1_score(y_test, np.argmax(test_hat.detach().numpy(), axis=1), average='micro'))
     
+    print(f'Accuracy: {accuracy_score(y_test, np.argmax(test_hat.detach().numpy(), axis=1))}')
     mapped['f1'] = f1_score(y_test, np.argmax(test_hat.detach().numpy(), axis=1), average=None)
+    mapped['recall'] = recall_score(y_test, np.argmax(test_hat.detach().numpy(), axis=1), average=None)
     print(mapped)
+    print('')
 
 print(np.mean(f1))
 
-
-for train_index, test_index in kf.split(x, y):
-    x_train = torch.from_numpy(x[train_index])
-    x_test = torch.from_numpy(x[test_index])
-    
-    y_train = torch.from_numpy(y[train_index].to_numpy())
-    y_test = torch.from_numpy(y[test_index].to_numpy())
-    
-    train_set = [(x_train[i], y_train[i]) for i in range(len(y_train))]
-    train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
-
-    loss_function = nn.CrossEntropyLoss()
-    discriminator = Discriminator(result.x[1], result.x[2])
-    optim = torch.optim.Adam(discriminator.parameters(), lr=result.x[3])
-
-    for epoch in range(result.x[0]):
-        for i, (inputs, targets) in enumerate(train_loader):
-            discriminator.zero_grad()
-            yhat = discriminator(inputs.float())
-            loss = loss_function(yhat, targets.long())
-            loss.backward()
-            optim.step()
-            
-        test_hat = discriminator(x_test.float())
-        
-        f1 = f1_score(y_test, np.argmax(test_hat.detach().numpy(), axis=1), average='micro')
-        #accuracy = accuracy_score(y_test, np.argmax(test_hat.detach().numpy(), axis=1))
-        #mapped['f1'] = f1_score(y_test, np.argmax(test_hat.detach().numpy(), axis=1), average=None)
-        
-        print(f'F1: {f1}')
-        #print(f'Epoch {epoch} F1: {f1}')
-        #print(f'Epoch {epoch} Accuracy: {accuracy}')
-        #print(f'Epoch {epoch} F1:')
-        #print(mapped)
-        #print('')
 
 
 
