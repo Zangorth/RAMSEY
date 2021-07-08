@@ -139,6 +139,28 @@ print(np.mean(f1))
 
 
 
+train_set = [(x[i], y[i]) for i in range(len(y))]
+train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
+
+loss_function = nn.CrossEntropyLoss()
+discriminator = Discriminator(result.x[1], result.x[2])
+optim = torch.optim.Adam(discriminator.parameters(), lr=result.x[3])
+
+for epoch in range(result.x[0]):
+    for i, (inputs, targets) in enumerate(train_loader):
+        discriminator.zero_grad()
+        yhat = discriminator(inputs.float())
+        loss = loss_function(yhat, targets.long())
+        loss.backward()
+        optim.step()
+
+
+torch.save(discriminator, 'C:\\Users\\Samuel\\Google Drive\\Portfolio\\Ramsey\\Voice Recognition.pt')
+
+
+
+
+
 
 
 
