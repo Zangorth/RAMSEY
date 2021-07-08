@@ -1,7 +1,6 @@
 from sqlalchemy import create_engine
 from pydub.playback import play
 from pydub import AudioSegment
-from random import randint
 import pyodbc as sql
 import pandas as pd
 import numpy as np
@@ -15,30 +14,27 @@ con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   
 query = 'SELECT * FROM RAMSEY.dbo.metadata'
 panda = pd.read_sql(query, con)
-
-hogan = pd.read_sql("SELECT id FROM RAMSEY.dbo.metadata WHERE keywords LIKE '%hogan%'", con)['id'].tolist()
-cruze = pd.read_sql("SELECT id FROM RAMSEY.dbo.metadata WHERE keywords LIKE '%cruze%'", con)['id'].tolist()
-
 con.close()
 
-samples = panda.sample(20, random_state=264)['id'].tolist()
-
 coleman = [4, 5, 21, 46, 53, 59, 83, 114, 307, 358, 359]
-deloney = [8, 59, 80, 114, 124, 130, 139, 149]
+deloney = [8, 59, 80, 114, 124, 130, 139, 149, 372]
 wright = [9, 19, 20, 103, 106, 261, 276, 321]
-ao = [21, 35, 71, 77, 83, 102, 115, 124, 130]
-cruze = [315] + cruze
-hogan = [336, 337, 339, 343, 347] + hogan
+ao = [21, 35, 71, 77, 83, 102, 115, 124, 130, 446, 487]
+cruze = [315, 375, 378, 384, 389, 391, 550]
+hogan = [336, 337, 339, 343, 347, 367, 405, 430, 454, 458, 601, 623, 682, 689, 693, 722]
 
-samples = hogan[0:8] + cruze[0:8] + coleman + deloney + wright + ao + samples
+samples = list(set(coleman + deloney + wright + ao + cruze + hogan))
 
 panda = pd.DataFrame(columns = ['id', 'cut', 'speaker'] + [i for i in range(193)])
 
 for sample in samples:
+    print(f'Video: {samples.index(sample)+1}/{len(samples)+1}')
+    print('')
+    
     sound = AudioSegment.from_file(f'C:\\Users\\Samuel\\Audio\\Audio Full\\{sample}.mp3')
-
-    for i in range(0, 10):
-        cut = randint(0, len(sound)-3000)
+    cut = 5000
+    
+    while cut+15000 < len(sound):
         out = sound[cut:cut+3000]
         out.export(f'C:\\Users\\Samuel\\Audio\\Audio Segment\\{sample} {cut}.wav', format='wav')
         
@@ -48,7 +44,7 @@ for sample in samples:
             play(out)
             
             speaker = input('Speaker: ')
-            speaker = 0 if speaker == '0' else speaker        
+            speaker = 0 if speaker == '0' else speaker
         
         y, rate = librosa.load(f'C:\\Users\\Samuel\\Audio\\Audio Segment\\{sample} {cut}.wav', res_type='kaiser_fast')
         mfccs = np.mean(librosa.feature.mfcc(y, rate, n_mfcc=40).T,axis=0)
@@ -67,6 +63,8 @@ for sample in samples:
         
         panda = panda.append(app, ignore_index=True, sort=False)
         
+        cut = cut + 15000
+        
         
 conn_str = (
     r'Driver={SQL Server};'
@@ -78,4 +76,4 @@ con = urllib.parse.quote_plus(conn_str)
 
 engine = create_engine(f'mssql+pyodbc:///?odbc_connect={con}')
 
-panda.to_sql(name='AudioTraining', con=engine, schema='dbo', if_exists='append', index=False)
+panda.to_sql(name='AudioTraining', con=engine, schema='dbo', if_exists='replace', index=False)
