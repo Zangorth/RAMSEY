@@ -15,10 +15,12 @@ class NoTranscriptFound(Exception):
 
 folder = r'C:\Users\Samuel\Audio'
 
+
+# Grab list of videos on the Ramsey channel
 videos = Playlist('https://www.youtube.com/watch?v=0JUw1agDjoA&list=UU7eBNeDW1GQf2NJQ6G6gAxw&index=2').video_urls
 videos = list(videos)
 
-
+# Grab list of videos that have already been recorded
 con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   Server=ZANGORTH\HOMEBASE; DATABASE=RAMSEY; 
                   Trusted_Connection=yes;''')
@@ -27,6 +29,7 @@ query = 'SELECT * FROM RAMSEY.dbo.metadata'
 collected = pd.read_sql(query, con)
 con.close()
 
+# Identify videos which need to be recorded
 videos = set(videos) - set(collected['link'])
 
 title, keywords, length, rating, views = [], [], [], [], []
@@ -41,6 +44,9 @@ for video_link in videos:
     name = yt.streams[0].title
     name = name.translate(str.maketrans('', '', string.punctuation)).lower()
     
+    # There are a couple of full (2-3 hour) videos on this channel, and I don't want those
+        # most videos should be less than 15 minutes, so that's a fair cut off
+        # I just want to log them so we don't scan them every time, but not download them
     if yt.length > 900:
         con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                           Server=ZANGORTH\HOMEBASE; DATABASE=RAMSEY; 
@@ -56,7 +62,8 @@ for video_link in videos:
         con.close()
         
     
-    elif not os.path.exists(f"{folder}/{name}.mp3") and yt.length <= 900:
+    # Downloads the audio files for the specified videos
+    elif not os.path.exists(f"{folder}/{name}.mp3"):
         keywords = '|'.join(yt.keywords)
         keywords = keywords.replace("'", "''").lower()
         

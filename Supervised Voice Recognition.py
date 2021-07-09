@@ -16,6 +16,9 @@ query = 'SELECT * FROM RAMSEY.dbo.metadata'
 panda = pd.read_sql(query, con)
 con.close()
 
+# Identify videos in which each personality is a cohost so we can get a good sample
+    # for all of their voices. Hogan and wright are particularly hard since she doesn't
+    # cohost very often and he isn't a host anymore. 
 coleman = [4, 5, 21, 46, 53, 59, 83, 114, 307, 358, 359]
 deloney = [8, 59, 80, 114, 124, 130, 139, 149, 372]
 wright = [9, 19, 20, 103, 106, 261, 276, 321]
@@ -27,6 +30,9 @@ samples = list(set(coleman + deloney + wright + ao + cruze + hogan))
 
 panda = pd.DataFrame(columns = ['id', 'cut', 'speaker'] + [i for i in range(193)])
 
+# For each sample we start five seconds in listen to three seconds, record who the speaker is,
+    # and then skip fifteen seconds ahead until the end of the recording. This probably provides
+    # more samples than we'll need, but that's fine, no harm. 
 for sample in samples:
     print(f'Video: {samples.index(sample)+1}/{len(samples)+1}')
     print('')
@@ -65,7 +71,7 @@ for sample in samples:
         
         cut = cut + 15000
         
-        
+# Upload the identified samples to SQL
 conn_str = (
     r'Driver={SQL Server};'
     r'Server=ZANGORTH\HOMEBASE;'
