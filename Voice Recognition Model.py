@@ -155,8 +155,8 @@ for epoch in range(result.x[0]):
         optim.step()
 
 
-torch.save(discriminator.state_dict(), 'C:\\Users\\Samuel\\Google Drive\\Portfolio\\Ramsey\\Voice Recognition.pt')
-pickle.dump(result, open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization results.pkl', 'wb'))
+torch.save(discriminator.state_dict(), r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\Voice Recognition.pt')
+pickle.dump(result.x, open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization results.pkl', 'wb'))
 
 
 
