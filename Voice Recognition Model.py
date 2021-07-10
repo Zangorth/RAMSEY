@@ -157,6 +157,7 @@ for epoch in range(result.x[0]):
 
 
 torch.save(discriminator.state_dict(), r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\Voice Recognition.pt')
+pickle.dump(mapped, open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization mapped.pkl', 'wb'))
 pickle.dump(scaler, open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization scaler.pkl', 'wb'))
 pickle.dump(result.x, open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization results.pkl', 'wb'))
 
