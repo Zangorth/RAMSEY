@@ -1,4 +1,5 @@
 from sklearn import preprocessing
+from pydub.playback import play
 from pydub import AudioSegment
 from torch import nn
 import pandas as pd
@@ -30,6 +31,7 @@ class Discriminator(nn.Module):
 
 results = pickle.load(open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization results.pkl', 'rb'))
 scaler = pickle.load(open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization scaler.pkl', 'rb'))
+mapped = pickle.load(open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization mapped.pkl', 'rb'))
 
 discriminator = Discriminator(results[1], results[2], results[4])
 discriminator.load_state_dict(torch.load(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\Voice Recognition.pt'))
@@ -44,6 +46,10 @@ for file in os.listdir():
     while cut <= len(sound):
         out = sound[cut:cut+3000]
         out.export(r'C:\Users\Samuel\Audio\Audio Segment\tobedeleted.wav', format='wav')
+        
+        #
+        #play(out)
+        #
         
         y, rate = librosa.load(r'C:\Users\Samuel\Audio\Audio Segment\tobedeleted.wav', res_type='kaiser_fast')
         mfccs = np.mean(librosa.feature.mfcc(y, rate, n_mfcc=40).T,axis=0)
@@ -60,10 +66,37 @@ for file in os.listdir():
         temp = pd.DataFrame(features).T
         temp.columns = ['start', 'end'] + [i for i in range(193)]
         
+        #
+        #x = scaler.transform(temp.drop(['start', 'end'], axis=1))
+        #speaker = np.argmax(discriminator(torch.from_numpy(x).float()).detach().numpy())
+        #print(mapped.loc[mapped.y == speaker, 'speaker'].item())
+        #print('')
+        #
+        
         panda = panda.append(temp, ignore_index=True, sort=False)
         
-        
         cut += 1000
+        
+    x = scaler.transform(panda.drop(['start', 'end'], axis=1))
+    
+    predictions = pd.DataFrame({'prediction': np.argmax(discriminator(torch.from_numpy(x).float()).detach().numpy(), axis=1),
+                               'confidence': np.max(discriminator(torch.from_numpy(x).float()).detach().numpy(), axis=1)})
+    predictions = pd.DataFrame(predictions).reset_index()
+    predictions.columns = ['second', 'speaker_id']
+    predictions = predictions.merge(mapped, how='left', left_on='speaker_id', right_on='y')
+    predictions = predictions[['second', 'speaker']]
+    
+    cut = 0
+    for i in range(len(panda)):
+        out = sound[cut:cut+1000]
+        play(out)
+        print(predictions.loc[predictions['second'] == i, 'speaker'].item())
+        
+        
+    
+    
+    predictions = pd.DataFrame(discriminator(torch.from_numpy(x).float()).detach().numpy(),
+                               columns=['AO', 'Caller', 'Coleman', 'Cruze', 'Deloney', 'Hogan', 'Ramsey', 'Wright'])
         
         
     
