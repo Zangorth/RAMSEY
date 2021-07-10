@@ -6,16 +6,17 @@ import pyodbc as sql
 from torch import nn
 import pandas as pd
 import numpy as np
+import pickle
 import skopt
 import torch
 
 class Discriminator(nn.Module):
-    def __init__(self, a, b):
+    def __init__(self, a, b, drop):
         super().__init__()
         self.model = nn.Sequential(
             nn.Linear(193, a),
             nn.ReLU(),
-            nn.Dropout(0.15),
+            nn.Dropout(drop),
             nn.Linear(a, b),
             nn.ReLU(),
             nn.Linear(b, 8),
@@ -26,9 +27,6 @@ class Discriminator(nn.Module):
     def forward(self, x):
         output = self.model(x)
         return output
-
-
-
 
 
 con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
@@ -59,11 +57,12 @@ space = [
     skopt.space.Integer(1, 30, name='epochs'),
     skopt.space.Integer(2**2, 2**10, name='a'),
     skopt.space.Integer(2**2, 2**10, name='b'),
-    skopt.space.Real(0.001, 0.5, name='lr', prior='log-uniform')
+    skopt.space.Real(0.001, 0.5, name='lr', prior='log-uniform'),
+    skopt.space.Real(0.0001, 1, name='drop', prior='log-uniform')
     ]
 
 @skopt.utils.use_named_args(space)
-def net(epochs, a, b, lr):
+def net(epochs, a, b, drop, lr):
     
     f1 = []
     for train_index, test_index in kf.split(x, y):
@@ -77,7 +76,7 @@ def net(epochs, a, b, lr):
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
     
         loss_function = nn.CrossEntropyLoss()
-        discriminator = Discriminator(a, b)
+        discriminator = Discriminator(a, b, drop)
         optim = torch.optim.Adam(discriminator.parameters(), lr=lr)
     
         for epoch in range(epochs):
@@ -102,6 +101,7 @@ print(f'Parameters: {result.x}')
 plots.plot_evaluations(result)
 
 
+kf = StratifiedKFold(10)
 f1 = []
 for train_index, test_index in kf.split(x, y):
     x_train = torch.from_numpy(x[train_index])
@@ -114,7 +114,7 @@ for train_index, test_index in kf.split(x, y):
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
 
     loss_function = nn.CrossEntropyLoss()
-    discriminator = Discriminator(result.x[1], result.x[2])
+    discriminator = Discriminator(result.x[1], result.x[2], result.x[4])
     optim = torch.optim.Adam(discriminator.parameters(), lr=result.x[3])
 
     for epoch in range(result.x[0]):
@@ -143,7 +143,7 @@ train_set = [(x[i], y[i]) for i in range(len(y))]
 train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
 
 loss_function = nn.CrossEntropyLoss()
-discriminator = Discriminator(result.x[1], result.x[2])
+discriminator = Discriminator(result.x[1], result.x[2], result.x[4])
 optim = torch.optim.Adam(discriminator.parameters(), lr=result.x[3])
 
 for epoch in range(result.x[0]):
@@ -155,8 +155,8 @@ for epoch in range(result.x[0]):
         optim.step()
 
 
-torch.save(discriminator, 'C:\\Users\\Samuel\\Google Drive\\Portfolio\\Ramsey\\Voice Recognition.pt')
-
+torch.save(discriminator.state_dict(), 'C:\\Users\\Samuel\\Google Drive\\Portfolio\\Ramsey\\Voice Recognition.pt')
+pickle.dump(result, open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization results.pkl', 'wb'))
 
 
 
