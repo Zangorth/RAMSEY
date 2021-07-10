@@ -50,7 +50,8 @@ kf = StratifiedKFold()
 y = panda['y']
 
 x = panda.drop(['id', 'cut', 'speaker', 'y'], axis=1)
-x = preprocessing.StandardScaler().fit_transform(x)
+scaler = preprocessing.StandardScaler().fit(x)
+x = scaler.transform(x)
 
 
 space = [
@@ -156,6 +157,7 @@ for epoch in range(result.x[0]):
 
 
 torch.save(discriminator.state_dict(), r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\Voice Recognition.pt')
+pickle.dump(scaler, open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization scaler.pkl', 'wb'))
 pickle.dump(result.x, open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization results.pkl', 'wb'))
 
 
