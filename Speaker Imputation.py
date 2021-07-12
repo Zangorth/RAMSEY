@@ -4,12 +4,15 @@ from pydub import AudioSegment
 from torch import nn
 import pandas as pd
 import numpy as np
+import warnings
 import librosa
 import pickle
 import torch
 import os
 
 os.chdir(r'C:\Users\Samuel\Audio\Audio Full')
+
+warnings.filterwarnings('ignore')
 
 class Discriminator(nn.Module):
     def __init__(self, a, b, drop):
@@ -38,7 +41,13 @@ discriminator.load_state_dict(torch.load(r'C:\Users\Samuel\Google Drive\Portfoli
 discriminator.eval()
 
 
+pred_frame = pd.DataFrame(columns=['id', 'second', 'speaker', 'confidence'] + [i for i in range(193)])
+
+i, end = 1, len(os.listdir())+1
 for file in os.listdir():
+    print(i/end)
+    i += 1
+    
     panda = pd.DataFrame(columns=['start', 'end'] + [i for i in range(193)])
     sound = AudioSegment.from_file(file)
     cut = 0
@@ -82,22 +91,15 @@ for file in os.listdir():
     predictions = pd.DataFrame({'prediction': np.argmax(discriminator(torch.from_numpy(x).float()).detach().numpy(), axis=1),
                                'confidence': np.max(discriminator(torch.from_numpy(x).float()).detach().numpy(), axis=1)})
     predictions = pd.DataFrame(predictions).reset_index()
-    predictions.columns = ['second', 'speaker_id']
+    predictions.columns = ['second', 'speaker_id', 'confidence']
     predictions = predictions.merge(mapped, how='left', left_on='speaker_id', right_on='y')
-    predictions = predictions[['second', 'speaker']]
+    predictions = predictions[['second', 'speaker', 'confidence']]
+    predictions['id'] = int(file.replace('.mp3', ''))
+    predictions = predictions[['id', 'second', 'speaker', 'confidence']]
     
-    cut = 0
-    for i in range(len(panda)):
-        out = sound[cut:cut+1000]
-        play(out)
-        print(predictions.loc[predictions['second'] == i, 'speaker'].item())
+    predictions = predictions.merge(panda, how='left', left_index=True, right_index=True)
+    predictions = predictions.drop(['start', 'end'], axis=1)
         
-        
-    
-    
-    predictions = pd.DataFrame(discriminator(torch.from_numpy(x).float()).detach().numpy(),
-                               columns=['AO', 'Caller', 'Coleman', 'Cruze', 'Deloney', 'Hogan', 'Ramsey', 'Wright'])
-        
-        
+    pred_frame = pred_frame.append(predictions, ignore_index=True, sort=False)
     
         
