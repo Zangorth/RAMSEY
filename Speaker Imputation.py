@@ -11,7 +11,7 @@ import torch
 import os
 
 os.chdir(r'C:\Users\Samuel\Audio\Audio Full')
-
+device = torch.device('cuda:0')
 warnings.filterwarnings('ignore')
 
 class Discriminator(nn.Module):
@@ -36,10 +36,9 @@ results = pickle.load(open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optim
 scaler = pickle.load(open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization scaler.pkl', 'rb'))
 mapped = pickle.load(open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization mapped.pkl', 'rb'))
 
-discriminator = Discriminator(results[1], results[2], results[4])
+discriminator = Discriminator(results[1], results[2], results[4]).to(device)
 discriminator.load_state_dict(torch.load(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\Voice Recognition.pt'))
 discriminator.eval()
-
 
 pred_frame = pd.DataFrame(columns=['id', 'second', 'speaker', 'confidence'] + [i for i in range(193)])
 
@@ -88,8 +87,8 @@ for file in os.listdir():
         
     x = scaler.transform(panda.drop(['start', 'end'], axis=1))
     
-    predictions = pd.DataFrame({'prediction': np.argmax(discriminator(torch.from_numpy(x).float()).detach().numpy(), axis=1),
-                               'confidence': np.max(discriminator(torch.from_numpy(x).float()).detach().numpy(), axis=1)})
+    predictions = pd.DataFrame({'prediction': np.argmax(discriminator(torch.from_numpy(x).to(device).float()).cpu().detach().numpy(), axis=1),
+                               'confidence': np.max(discriminator(torch.from_numpy(x).to(device).float()).cpu().detach().numpy(), axis=1)})
     predictions = pd.DataFrame(predictions).reset_index()
     predictions.columns = ['second', 'speaker_id', 'confidence']
     predictions = predictions.merge(mapped, how='left', left_on='speaker_id', right_on='y')
