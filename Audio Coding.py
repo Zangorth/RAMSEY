@@ -24,8 +24,6 @@ incomplete = os.listdir()
 incomplete = list(set([int(file.replace('.mp3', '')) for file in incomplete]) - set(completed))
 incomplete = [f'{file}.mp3' for file in incomplete]
 
-with mp.Pool(30) as pool:
-    pool.map(extract_audio, incomplete)
-    
-pool.join()
-pool.close()
+for i in range(len(incomplete)):
+    print(f'Progress: {i}/{len(incomplete)}')
+    extract_audio(incomplete[i])
