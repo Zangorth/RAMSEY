@@ -14,10 +14,9 @@ def extract_audio(file):
     
     while cut <= len(sound):
         out = sound[cut:cut+3000]
-        out.export(f'C:\\Users\\Samuel\\Audio\\Audio Segment\\tobedeleted_{file}.wav', format='wav')
         
         try:
-            y, rate = librosa.load(f'C:\\Users\\Samuel\\Audio\\Audio Segment\\tobedeleted_{file}.wav', res_type='kaiser_fast')
+            y, rate = librosa.load(out.export(format='wav'), res_type='kaiser_fast')
             mfccs = np.mean(librosa.feature.mfcc(y, rate, n_mfcc=40).T,axis=0)
             stft = np.abs(librosa.stft(y))
             chroma = np.mean(librosa.feature.chroma_stft(S=stft, sr=rate).T,axis=0)

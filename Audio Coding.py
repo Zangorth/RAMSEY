@@ -1,4 +1,3 @@
-import multiprocessing as mp
 import pyodbc as sql
 import pandas as pd
 import warnings
