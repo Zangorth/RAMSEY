@@ -10,6 +10,8 @@ import pickle
 import skopt
 import torch
 
+device = torch.device('cuda:0')
+
 class Discriminator(nn.Module):
     def __init__(self, a, b, drop):
         super().__init__()
@@ -62,22 +64,24 @@ space = [
     skopt.space.Real(0.0001, 1, name='drop', prior='log-uniform')
     ]
 
+epochs, a, b, drop, lr = 20, 64, 32, 0.15, 0.01
+
 @skopt.utils.use_named_args(space)
 def net(epochs, a, b, drop, lr):
     
     f1 = []
     for train_index, test_index in kf.split(x, y):
-        x_train = torch.from_numpy(x[train_index])
-        x_test = torch.from_numpy(x[test_index])
+        x_train = torch.from_numpy(x[train_index]).to(device)
+        x_test = torch.from_numpy(x[test_index]).to(device)
         
-        y_train = torch.from_numpy(y[train_index].to_numpy())
-        y_test = torch.from_numpy(y[test_index].to_numpy())
+        y_train = torch.from_numpy(y[train_index].to_numpy()).to(device)
+        y_test = torch.from_numpy(y[test_index].to_numpy()).to(device)
         
-        train_set = [(x_train[i], y_train[i]) for i in range(len(y_train))]
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
+        train_set = [(x_train[i].cuda(), y_train[i].cuda()) for i in range(len(y_train))]
+        train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
     
         loss_function = nn.CrossEntropyLoss()
-        discriminator = Discriminator(a, b, drop)
+        discriminator = Discriminator(a, b, drop).to(device)
         optim = torch.optim.Adam(discriminator.parameters(), lr=lr)
     
         for epoch in range(epochs):
@@ -88,8 +92,8 @@ def net(epochs, a, b, drop, lr):
                 loss.backward()
                 optim.step()
                 
-        test_hat = discriminator(x_test.float())    
-        f1.append(f1_score(y_test, np.argmax(test_hat.detach().numpy(), axis=1), average='micro'))
+        test_hat = discriminator(x_test.float())
+        f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='micro'))
     
     print(np.mean(f1))
     return (- 1.0 * np.mean(f1))
