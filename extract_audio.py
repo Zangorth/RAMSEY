@@ -6,6 +6,9 @@ import warnings
 import librosa
 import urllib
 
+class ParameterError(Exception):
+    pass
+
 warnings.filterwarnings('ignore')
 
 def extract_audio(file):
@@ -46,6 +49,13 @@ def extract_audio(file):
                 
         except ValueError:
             pass
+        
+        except ParameterError:
+            pass
+        
+        except Exception:
+            pass
+        
         
         cut += 1000
         
