@@ -1,14 +1,19 @@
 from sklearn.metrics import f1_score, recall_score, accuracy_score
 from sklearn.model_selection import StratifiedKFold
+from sqlalchemy import create_engine
 from sklearn import preprocessing
 from skopt import plots
 import pyodbc as sql
 from torch import nn
 import pandas as pd
 import numpy as np
-import pickle
+import urllib
 import skopt
 import torch
+
+####################
+# Define Functions #
+####################
 
 device = torch.device('cuda:0')
 
@@ -31,6 +36,11 @@ class Discriminator(nn.Module):
         return output
 
 
+#############
+# Read Data #
+#############
+
+# Training Audio
 con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   Server=ZANGORTH\HOMEBASE; DATABASE=RAMSEY; 
                   Trusted_Connection=yes;''')
@@ -41,21 +51,36 @@ FROM RAMSEY.dbo.AudioTraining
 WHERE speaker NOT IN ('MIXED', 'NONE')
 '''
 
-panda = pd.read_sql(query, con)
+train_audio = pd.read_sql(query, con)
+
+query = '''SELECT * FROM RAMSEY.dbo.AudioCoding'''
+audio = pd.read_sql(query, con)
+
 con.close()
 
-panda['y'] = panda['speaker'].astype('category').cat.codes
-mapped = panda[['y', 'speaker']].drop_duplicates().reset_index(drop=True)
+##############
+# Clean Data #
+##############
+train_audio['y'] = train_audio['speaker'].astype('category').cat.codes
+
+mapped = train_audio[['y', 'speaker']].drop_duplicates().reset_index(drop=True)
 mapped = mapped.sort_values('y')
 
 kf = StratifiedKFold()
-y = panda['y']
+y = train_audio['y']
+y = torch.from_numpy(y.values)
 
-x = panda.drop(['id', 'cut', 'speaker', 'y'], axis=1)
+x = train_audio.drop(['id', 'cut', 'speaker', 'y'], axis=1)
 scaler = preprocessing.StandardScaler().fit(x)
 x = scaler.transform(x)
+x = torch.from_numpy(x)
 
+transform = pd.DataFrame(scaler.transform(audio.drop(['id', 'second'], axis=1)), columns=audio.columns[2:])
+audio = audio[['id', 'second']].merge(transform, right_index=True, left_index=True, how='outer')
 
+####################
+# Optimize Network #
+####################
 space = [
     skopt.space.Integer(1, 30, name='epochs'),
     skopt.space.Integer(2**2, 2**10, name='a'),
@@ -71,11 +96,11 @@ def net(epochs, a, b, drop, lr):
     
     f1 = []
     for train_index, test_index in kf.split(x, y):
-        x_train = torch.from_numpy(x[train_index]).to(device)
-        x_test = torch.from_numpy(x[test_index]).to(device)
+        x_train = x[train_index].to(device)
+        x_test = x[test_index].to(device)
         
-        y_train = torch.from_numpy(y[train_index].to_numpy()).to(device)
-        y_test = torch.from_numpy(y[test_index].to_numpy()).to(device)
+        y_train = y[train_index].to(device)
+        y_test = y[test_index].to(device)
         
         train_set = [(x_train[i].cuda(), y_train[i].cuda()) for i in range(len(y_train))]
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
@@ -105,21 +130,23 @@ print(f'Max F1: {result.fun}')
 print(f'Parameters: {result.x}')
 plots.plot_evaluations(result)
 
-
+####################
+# Validate Network #
+####################
 kf = StratifiedKFold(10)
 f1 = []
 for train_index, test_index in kf.split(x, y):
-    x_train = torch.from_numpy(x[train_index])
-    x_test = torch.from_numpy(x[test_index])
+    x_train = x[train_index].to(device)
+    x_test = x[test_index].to(device)
     
-    y_train = torch.from_numpy(y[train_index].to_numpy())
-    y_test = torch.from_numpy(y[test_index].to_numpy())
+    y_train = y[train_index].to(device)
+    y_test = y[test_index].to(device)
     
     train_set = [(x_train[i], y_train[i]) for i in range(len(y_train))]
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
 
     loss_function = nn.CrossEntropyLoss()
-    discriminator = Discriminator(result.x[1], result.x[2], result.x[4])
+    discriminator = Discriminator(result.x[1], result.x[2], result.x[4]).to(device)
     optim = torch.optim.Adam(discriminator.parameters(), lr=result.x[3])
 
     for epoch in range(result.x[0]):
@@ -130,25 +157,28 @@ for train_index, test_index in kf.split(x, y):
             loss.backward()
             optim.step()
             
-    test_hat = discriminator(x_test.float())    
-    f1.append(f1_score(y_test, np.argmax(test_hat.detach().numpy(), axis=1), average='micro'))
+    test_hat = discriminator(x_test.float())
+    f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='micro'))
     
-    print(f'Accuracy: {accuracy_score(y_test, np.argmax(test_hat.detach().numpy(), axis=1))}')
-    mapped['f1'] = f1_score(y_test, np.argmax(test_hat.detach().numpy(), axis=1), average=None)
-    mapped['recall'] = recall_score(y_test, np.argmax(test_hat.detach().numpy(), axis=1), average=None)
+    print(f'Accuracy: {accuracy_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1))}')
+    mapped['f1'] = f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average=None)
+    mapped['recall'] = recall_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average=None)
     print(mapped)
     print('')
 
 print(np.mean(f1))
 
 
-
-
+#################
+# Train Network #
+#################
+torch.cuda.empty_cache()
+x, y = x.to(device), y.to(device)
 train_set = [(x[i], y[i]) for i in range(len(y))]
 train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
 
 loss_function = nn.CrossEntropyLoss()
-discriminator = Discriminator(result.x[1], result.x[2], result.x[4])
+discriminator = Discriminator(result.x[1], result.x[2], result.x[4]).to(device)
 optim = torch.optim.Adam(discriminator.parameters(), lr=result.x[3])
 
 for epoch in range(result.x[0]):
@@ -160,17 +190,36 @@ for epoch in range(result.x[0]):
         optim.step()
 
 
-torch.save(discriminator.state_dict(), r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\Voice Recognition.pt')
-pickle.dump(mapped, open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization mapped.pkl', 'wb'))
-pickle.dump(scaler, open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization scaler.pkl', 'wb'))
-pickle.dump(result.x, open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\optimization results.pkl', 'wb'))
+#########################
+# Predicting Full Audio #
+#########################
+# GPU barely too small to handle all the data, so just iterating over it
+predictions = pd.DataFrame(columns=['speaker', 'confidence'])
+i = 0
+while i <= len(audio):
+    print(f'{i}:{i+100000} / {len(audio)}')
+    
+    audio_x = torch.from_numpy(transform.iloc[i:i+100000].values).float()
+    
+    append = pd.DataFrame({'speaker_id': np.argmax(discriminator(audio_x.to(device)).cpu().detach().numpy(), axis=1),
+                           'confidence': np.max(discriminator(audio_x.to(device)).cpu().detach().numpy(), axis=1)})
+    append = append.merge(mapped, how='left', left_on='speaker_id', right_on='y')[['speaker', 'confidence']]
+    
+    predictions = predictions.append(append, ignore_index=True, sort=False)
+    
+    i+=100000
+    
+    
+predictions = audio[['id', 'second']].merge(predictions, right_index=True, left_index=True, how='outer')
+    
+conn_str = (
+        r'Driver={SQL Server};'
+        r'Server=ZANGORTH\HOMEBASE;'
+        r'Database=RAMSEY;'
+        r'Trusted_Connection=yes;'
+    )
+con = urllib.parse.quote_plus(conn_str)
 
+engine = create_engine(f'mssql+pyodbc:///?odbc_connect={con}')
 
-
-
-
-
-
-
-
-        
+predictions.to_sql(name='predictions', con=engine, schema='dbo', if_exists='replace', index=False)
