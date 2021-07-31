@@ -56,7 +56,7 @@ LEFT JOIN RAMSEY.dbo.AudioCoding AS code
 train_audio = pd.read_sql(query, con)
 
 query = '''SELECT * FROM RAMSEY.dbo.AudioCoding'''
-#audio = pd.read_sql(query, con)
+audio = pd.read_sql(query, con)
 
 con.close()
 
@@ -85,10 +85,22 @@ x = x.merge(lag1, left_index=True, right_index=True)
 x = x.merge(lag2, left_index=True, right_index=True)
 x = x.drop('id', axis=1)
 
-del [lag1, lag2]
 
-#transform = pd.DataFrame(scaler.transform(audio.drop(['id', 'second'], axis=1)), columns=audio.columns[2:])
-#audio = audio[['id', 'second']].merge(transform, right_index=True, left_index=True, how='outer')
+
+transform = pd.DataFrame(scaler.transform(audio.drop(['id', 'second'], axis=1)), columns=audio.columns[2:])
+transform = audio[['id']].merge(transform, right_index=True, left_index=True)
+
+lag1 = transform.groupby('id').shift(1)
+lag1.columns = [f'{col}_lag1' for col in transform.columns if col != 'id']
+
+lag2 = transform.groupby('id').shift(2)
+lag2.columns = [f'{col}_lag1' for col in transform.columns if col != 'id']
+
+audio = audio[['id', 'second']].merge(transform.drop('id', axis=1), right_index=True, left_index=True)
+audio = audio.merge(lag1, right_index=True, left_index=True)
+audio = audio.merge(lag2, right_index=True, left_index=True).dropna().reset_index(drop=True)
+
+del [lag1, lag2]
 
 ####################
 # Optimize Network #
@@ -102,37 +114,37 @@ space = [
     skopt.space.Integer(0, 2, name='lags')
     ]
 
-epochs, a, b, drop, lr = 20, 64, 32, 0.15, 0.01
+
+epochs, a, b, drop, lr, lags = 20, 64, 32, 0.15, 0.01, 1
 
 @skopt.utils.use_named_args(space)
 def net(epochs, a, b, lr, drop, lags):
     if lags == 0:
         lx = x[[col for col in x.columns if 'lag' not in col]].dropna()
         ly = y.loc[lx.index]
-        
-        lx, ly = lx.reset_index(drop=True), ly.reset_index(drop=True)
-        lx, ly = torch.from_numpy(x.values), torch.from_numpy(y.values)
     
     elif lags == 1:
         lx = x[[col for col in x.columns if 'lag2' not in col]].dropna()
         ly = y.loc[lx.index]
-
-        lx, ly = lx.reset_index(drop=True), ly.reset_index(drop=True)
-        lx, ly = torch.from_numpy(x.values), torch.from_numpy(y.values)
     
     else:
         lx = x.dropna()
         ly = y.loc[lx.index]
-        lx, ly = lx.reset_index(drop=True), ly.reset_index(drop=True)
-        lx, ly = torch.from_numpy(x.values), torch.from_numpy(y.values)
+    
+    lx, ly = lx.reset_index(drop=True), ly.reset_index(drop=True)
     
     f1 = []
-    for train_index, test_index in kf.split(lx, ly):
-        x_train = lx[train_index].to(device)
-        x_test = lx[test_index].to(device)
+    for i in range(0, 5):
+        x_train = lx.groupby(ly).apply(lambda x: x.sample(frac=0.2))
+        x_train.index = [x_train.index[i][1] for i in range(len(x_train))]
+        x_train = x_train.sort_index()
         
-        y_train = ly[train_index].to(device)
-        y_test = ly[test_index].to(device)
+        x_test = lx.loc[~lx.index.isin(x_train.index)]
+        y_train = ly.loc[x_train.index]
+        y_test = ly.loc[~ly.index.isin(x_train.index)]
+        
+        x_train, x_test = torch.from_numpy(x_train.values).to(device), torch.from_numpy(x_test.values).to(device)
+        y_train, y_test = torch.from_numpy(y_train.values).to(device), torch.from_numpy(y_test.values).to(device)
         
         train_set = [(x_train[i].to(device), y_train[i].to(device)) for i in range(len(y_train))]
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
@@ -156,7 +168,7 @@ def net(epochs, a, b, lr, drop, lags):
     return (- 1.0 * np.mean(f1))
         
 
-result = skopt.forest_minimize(net, space, acq_func='PI')
+result = skopt.forest_minimize(net, space, acq_func='PI', x0=[20, 64, 32, 0.01, 0.15, 1])
 
 print(f'Max F1: {result.fun}')
 print(f'Parameters: {result.x}')
@@ -165,20 +177,38 @@ plots.plot_evaluations(result)
 ####################
 # Validate Network #
 ####################
-kf = StratifiedKFold(10)
+if result.x[-1] == 0:
+    x = x[[col for col in x.columns if 'lag' not in col]].dropna()
+    y = y.loc[x.index]
+
+elif result.x[-1] == 1:
+    x = x[[col for col in x.columns if 'lag2' not in col]].dropna()
+    y = y.loc[x.index]
+
+else:
+    x = x.dropna()
+    y = y.loc[x.index]
+    
+x, y = x.reset_index(drop=True), y.reset_index(drop=True)
+
 f1 = []
-for train_index, test_index in kf.split(x, y):
-    x_train = x[train_index].to(device)
-    x_test = x[test_index].to(device)
+for i in range(0, 5):
+    x_train = x.groupby(y).apply(lambda x: x.sample(frac=0.2))
+    x_train.index = [x_train.index[i][1] for i in range(len(x_train))]
+    x_train = x_train.sort_index()
     
-    y_train = y[train_index].to(device)
-    y_test = y[test_index].to(device)
+    x_test = x.loc[~x.index.isin(x_train.index)]
+    y_train = y.loc[x_train.index]
+    y_test = y.loc[~y.index.isin(x_train.index)]
     
-    train_set = [(x_train[i], y_train[i]) for i in range(len(y_train))]
-    train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
+    x_train, x_test = torch.from_numpy(x_train.values).to(device), torch.from_numpy(x_test.values).to(device)
+    y_train, y_test = torch.from_numpy(y_train.values).to(device), torch.from_numpy(y_test.values).to(device)
+    
+    train_set = [(x_train[i].to(device), y_train[i].to(device)) for i in range(len(y_train))]
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
 
     loss_function = nn.CrossEntropyLoss()
-    discriminator = Discriminator(result.x[1], result.x[2], result.x[4]).to(device)
+    discriminator = Discriminator(result.x[1], result.x[2], result.x[4], x.shape[1]).to(device)
     optim = torch.optim.Adam(discriminator.parameters(), lr=result.x[3])
 
     for epoch in range(result.x[0]):
@@ -191,26 +221,23 @@ for train_index, test_index in kf.split(x, y):
             
     test_hat = discriminator(x_test.float())
     f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='micro'))
-    
     print(f'Accuracy: {accuracy_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1))}')
     mapped['f1'] = f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average=None)
     mapped['recall'] = recall_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average=None)
     print(mapped)
     print('')
 
-print(np.mean(f1))
-
 
 #################
 # Train Network #
 #################
 torch.cuda.empty_cache()
-x, y = x.to(device), y.to(device)
+x, y = torch.from_numpy(x.values).to(device), torch.from_numpy(y.values).to(device)
 train_set = [(x[i], y[i]) for i in range(len(y))]
 train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
 
 loss_function = nn.CrossEntropyLoss()
-discriminator = Discriminator(result.x[1], result.x[2], result.x[4]).to(device)
+discriminator = Discriminator(result.x[1], result.x[2], result.x[4], x.shape[1]).to(device)
 optim = torch.optim.Adam(discriminator.parameters(), lr=result.x[3])
 
 for epoch in range(result.x[0]):
@@ -231,7 +258,7 @@ i = 0
 while i <= len(audio):
     print(f'{i}:{i+100000} / {len(audio)}')
     
-    audio_x = torch.from_numpy(transform.iloc[i:i+100000].values).float()
+    audio_x = torch.from_numpy(audio.drop(['id', 'second'], axis=1)[i:i+100000].values).float()
     
     append = pd.DataFrame({'speaker_id': np.argmax(discriminator(audio_x.to(device)).cpu().detach().numpy(), axis=1),
                            'confidence': np.max(discriminator(audio_x.to(device)).cpu().detach().numpy(), axis=1)})
