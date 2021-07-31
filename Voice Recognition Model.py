@@ -14,14 +14,14 @@ import torch
 ####################
 # Define Functions #
 ####################
-
+kf = StratifiedKFold()
 device = torch.device('cuda:0')
 
 class Discriminator(nn.Module):
-    def __init__(self, a, b, drop):
+    def __init__(self, a, b, drop, shape):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(580, a),
+            nn.Linear(shape, a),
             nn.ReLU(),
             nn.Dropout(drop),
             nn.Linear(a, b),
@@ -64,6 +64,7 @@ con.close()
 # Clean Data #
 ##############
 train_audio['y'] = train_audio['speaker'].astype('category').cat.codes
+y = train_audio['y']
 
 mapped = train_audio[['y', 'speaker']].drop_duplicates().reset_index(drop=True)
 mapped = mapped.sort_values('y')
@@ -81,15 +82,10 @@ lag2 = x.groupby('id').shift(2)
 lag2.columns = [f'{col}_lag2' for col in x.columns if col != 'id']
 
 x = x.merge(lag1, left_index=True, right_index=True)
-x = x.merge(lag2, left_index=True, right_index=True).dropna()
+x = x.merge(lag2, left_index=True, right_index=True)
+x = x.drop('id', axis=1)
 
 del [lag1, lag2]
-
-kf = StratifiedKFold()
-y = train_audio.iloc[x.index, -1]
-y = torch.from_numpy(y.values)
-
-x = torch.from_numpy(x.values)
 
 #transform = pd.DataFrame(scaler.transform(audio.drop(['id', 'second'], axis=1)), columns=audio.columns[2:])
 #audio = audio[['id', 'second']].merge(transform, right_index=True, left_index=True, how='outer')
@@ -102,27 +98,47 @@ space = [
     skopt.space.Integer(2**2, 2**10, name='a'),
     skopt.space.Integer(2**2, 2**10, name='b'),
     skopt.space.Real(0.001, 0.5, name='lr', prior='log-uniform'),
-    skopt.space.Real(0.0001, 1, name='drop', prior='log-uniform')
+    skopt.space.Real(0.0001, 1, name='drop', prior='log-uniform'),
+    skopt.space.Integer(0, 2, name='lags')
     ]
 
 epochs, a, b, drop, lr = 20, 64, 32, 0.15, 0.01
 
 @skopt.utils.use_named_args(space)
-def net(epochs, a, b, drop, lr):
+def net(epochs, a, b, lr, drop, lags):
+    if lags == 0:
+        lx = x[[col for col in x.columns if 'lag' not in col]].dropna()
+        ly = y.loc[lx.index]
+        
+        lx, ly = lx.reset_index(drop=True), ly.reset_index(drop=True)
+        lx, ly = torch.from_numpy(x.values), torch.from_numpy(y.values)
+    
+    elif lags == 1:
+        lx = x[[col for col in x.columns if 'lag2' not in col]].dropna()
+        ly = y.loc[lx.index]
+
+        lx, ly = lx.reset_index(drop=True), ly.reset_index(drop=True)
+        lx, ly = torch.from_numpy(x.values), torch.from_numpy(y.values)
+    
+    else:
+        lx = x.dropna()
+        ly = y.loc[lx.index]
+        lx, ly = lx.reset_index(drop=True), ly.reset_index(drop=True)
+        lx, ly = torch.from_numpy(x.values), torch.from_numpy(y.values)
     
     f1 = []
-    for train_index, test_index in kf.split(x, y):
-        x_train = x[train_index].to(device)
-        x_test = x[test_index].to(device)
+    for train_index, test_index in kf.split(lx, ly):
+        x_train = lx[train_index].to(device)
+        x_test = lx[test_index].to(device)
         
-        y_train = y[train_index].to(device)
-        y_test = y[test_index].to(device)
+        y_train = ly[train_index].to(device)
+        y_test = ly[test_index].to(device)
         
         train_set = [(x_train[i].to(device), y_train[i].to(device)) for i in range(len(y_train))]
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
     
         loss_function = nn.CrossEntropyLoss()
-        discriminator = Discriminator(a, b, drop).to(device)
+        discriminator = Discriminator(a, b, drop, lx.shape[1]).to(device)
         optim = torch.optim.Adam(discriminator.parameters(), lr=lr)
     
         for epoch in range(epochs):
