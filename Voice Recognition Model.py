@@ -21,12 +21,12 @@ class Discriminator(nn.Module):
     def __init__(self, a, b, drop):
         super().__init__()
         self.model = nn.Sequential(
-            nn.Linear(193, a),
+            nn.Linear(580, a),
             nn.ReLU(),
             nn.Dropout(drop),
             nn.Linear(a, b),
             nn.ReLU(),
-            nn.Linear(b, 8),
+            nn.Linear(b, 10),
             nn.Softmax(dim=1)
             )
         
@@ -46,15 +46,17 @@ con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   Trusted_Connection=yes;''')
                   
 query = '''
-SELECT * 
-FROM RAMSEY.dbo.AudioTraining
-WHERE speaker NOT IN ('MIXED', 'NONE')
+SELECT speaker, code.*
+FROM RAMSEY.dbo.AudioTraining AS train
+LEFT JOIN RAMSEY.dbo.AudioCoding AS code
+    ON train.id = code.id
+    AND train.[second] = code.[second]
 '''
 
 train_audio = pd.read_sql(query, con)
 
 query = '''SELECT * FROM RAMSEY.dbo.AudioCoding'''
-audio = pd.read_sql(query, con)
+#audio = pd.read_sql(query, con)
 
 con.close()
 
@@ -66,17 +68,31 @@ train_audio['y'] = train_audio['speaker'].astype('category').cat.codes
 mapped = train_audio[['y', 'speaker']].drop_duplicates().reset_index(drop=True)
 mapped = mapped.sort_values('y')
 
+x = train_audio.drop(['id', 'second', 'speaker', 'y'], axis=1)
+
+scaler = preprocessing.StandardScaler().fit(x)
+x = pd.DataFrame(scaler.transform(x), columns=train_audio.columns[3:-1])
+x = train_audio[['id']].merge(x, left_index=True, right_index=True)
+
+lag1 = x.groupby('id').shift(1)
+lag1.columns = [f'{col}_lag1' for col in x.columns if col != 'id']
+
+lag2 = x.groupby('id').shift(2)
+lag2.columns = [f'{col}_lag2' for col in x.columns if col != 'id']
+
+x = x.merge(lag1, left_index=True, right_index=True)
+x = x.merge(lag2, left_index=True, right_index=True).dropna()
+
+del [lag1, lag2]
+
 kf = StratifiedKFold()
-y = train_audio['y']
+y = train_audio.iloc[x.index, -1]
 y = torch.from_numpy(y.values)
 
-x = train_audio.drop(['id', 'cut', 'speaker', 'y'], axis=1)
-scaler = preprocessing.StandardScaler().fit(x)
-x = scaler.transform(x)
-x = torch.from_numpy(x)
+x = torch.from_numpy(x.values)
 
-transform = pd.DataFrame(scaler.transform(audio.drop(['id', 'second'], axis=1)), columns=audio.columns[2:])
-audio = audio[['id', 'second']].merge(transform, right_index=True, left_index=True, how='outer')
+#transform = pd.DataFrame(scaler.transform(audio.drop(['id', 'second'], axis=1)), columns=audio.columns[2:])
+#audio = audio[['id', 'second']].merge(transform, right_index=True, left_index=True, how='outer')
 
 ####################
 # Optimize Network #
@@ -102,7 +118,7 @@ def net(epochs, a, b, drop, lr):
         y_train = y[train_index].to(device)
         y_test = y[test_index].to(device)
         
-        train_set = [(x_train[i].cuda(), y_train[i].cuda()) for i in range(len(y_train))]
+        train_set = [(x_train[i].to(device), y_train[i].to(device)) for i in range(len(y_train))]
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
     
         loss_function = nn.CrossEntropyLoss()
