@@ -17,6 +17,18 @@ panda = pd.read_sql(query, con)
 con.close()
 
 
+con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
+                  Server=ZANGORTH\HOMEBASE; DATABASE=RAMSEY; 
+                  Trusted_Connection=yes;''')
+                  
+query = '''
+SELECT *
+FROM RAMSEY.dbo.predictions
+WHERE id IN (232, 5059, 4188, 5061, 1372, 321, 1359, 391)
+'''
+semi = pd.read_sql(query, con)
+con.close()
+
 #######################
 # Supervised Learning #
 #######################
@@ -71,7 +83,8 @@ for i in range(len(samples)):
                 speaker = 0
         
         
-        upload = upload.append(pd.DataFrame({'id': [sample], 'second': [second], 'speaker': [speaker]}),
+        upload = upload.append(pd.DataFrame({'id': [sample], 'second': [second], 
+                                             'speaker': [speaker], 'source': 'supervised'}),
                                ignore_index=True, sort=False)
         
         second += 1
@@ -91,6 +104,77 @@ for i in range(len(samples)):
 ##############################
 # Semi - Supervised Learning #
 ##############################
+
+for sample in set(semi['id']):
+    supervision = semi.loc[semi.id == sample].sort_values('second').reset_index(drop=True)
+    second = supervision.second.min()
+    
+    sound = AudioSegment.from_file(f'C:\\Users\\Samuel\\Audio\\Audio Full\\{sample}.mp3')
+    sound = sound[second*1000:]
+    
+    for cut in range(0, len(sound), 1000):
+        label = supervision.loc[supervision.second == second, 'speaker'].item()
+        
+        play(sound[cut:cut+1000])
+        speaker = input(f'Speaker {label}? ')
+        
+        if speaker != '':
+            supervision.loc[supervision.second == second, 'speaker'] = speaker
+            print(f'({second}/{len(sound)/1000}) Updated: Speaker = {speaker}')
+        
+        second += 1
+        
+    supervision['source'] = 'semi'
+    supervision = supervision[['id', 'second', 'speaker', 'source']]
+    
+    conn_str = (
+        r'Driver={SQL Server};'
+        r'Server=ZANGORTH\HOMEBASE;'
+        r'Database=RAMSEY;'
+        r'Trusted_Connection=yes;'
+    )
+    con = urllib.parse.quote_plus(conn_str)
+    engine = create_engine(f'mssql+pyodbc:///?odbc_connect={con}')
+    supervision.to_sql(name='AudioTraining', con=engine, schema='dbo', if_exists='append', index=False)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
