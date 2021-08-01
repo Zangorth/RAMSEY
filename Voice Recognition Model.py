@@ -46,17 +46,21 @@ con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   Trusted_Connection=yes;''')
                   
 query = '''
-SELECT speaker, code.*
+SELECT speaker, YEAR(publish_date) AS 'publish_year', 
+    code.*
 FROM RAMSEY.dbo.AudioTraining AS train
 LEFT JOIN RAMSEY.dbo.AudioCoding AS code
     ON train.id = code.id
     AND train.[second] = code.[second]
+LEFT JOIN RAMSEY.dbo.metadata AS meta
+    ON train.id = meta.id
 '''
 
 train_audio = pd.read_sql(query, con)
 
 query = '''
-SELECT audio.*
+SELECT YEAR(publish_date) AS 'publish_year', 
+    audio.*
 FROM RAMSEY.dbo.AudioCoding AS audio
 RIGHT JOIN RAMSEY.dbo.metadata AS meta
     ON audio.id = meta.id
@@ -75,10 +79,11 @@ y = train_audio['y']
 mapped = train_audio[['y', 'speaker']].drop_duplicates().reset_index(drop=True)
 mapped = mapped.sort_values('y')
 
-x = train_audio.drop(['id', 'second', 'speaker', 'y'], axis=1)
+years = pd.get_dummies(train_audio['publish_year'])
+x = train_audio.drop(['id', 'second', 'speaker', 'y', 'publish_year'], axis=1)
 
 scaler = preprocessing.StandardScaler().fit(x)
-x = pd.DataFrame(scaler.transform(x), columns=train_audio.columns[3:-1])
+x = pd.DataFrame(scaler.transform(x), columns=train_audio.columns[4:-1])
 x = train_audio[['id']].merge(x, left_index=True, right_index=True)
 
 lag1 = x.groupby('id').shift(1)
@@ -89,9 +94,10 @@ lag2.columns = [f'{col}_lag2' for col in x.columns if col != 'id']
 
 x = x.merge(lag1, left_index=True, right_index=True)
 x = x.merge(lag2, left_index=True, right_index=True)
+x = x.merge(years, left_index=True, right_index=True)
 x = x.drop('id', axis=1)
 
-transform = pd.DataFrame(scaler.transform(audio.drop(['id', 'second'], axis=1)), columns=audio.columns[2:])
+transform = pd.DataFrame(scaler.transform(audio.drop(['id', 'second', 'publish_year'], axis=1)), columns=audio.columns[3:])
 transform = audio[['id']].merge(transform, right_index=True, left_index=True)
 
 lag1 = transform.groupby('id').shift(1)
@@ -99,12 +105,14 @@ lag1.columns = [f'{col}_lag1' for col in transform.columns if col != 'id']
 
 lag2 = transform.groupby('id').shift(2)
 lag2.columns = [f'{col}_lag1' for col in transform.columns if col != 'id']
+years = pd.get_dummies(audio['publish_year'])
 
 audio = audio[['id', 'second']].merge(transform.drop('id', axis=1), right_index=True, left_index=True)
 audio = audio.merge(lag1, right_index=True, left_index=True)
-audio = audio.merge(lag2, right_index=True, left_index=True).dropna().reset_index(drop=True)
+audio = audio.merge(lag2, right_index=True, left_index=True)
+audio = audio.merge(years, right_index=True, left_index=True).dropna().reset_index(drop=True)
 
-del [lag1, lag2]
+del [lag1, lag2, years]
 
 ####################
 # Optimize Network #
@@ -113,7 +121,7 @@ space = [
     skopt.space.Integer(1, 30, name='epochs'),
     skopt.space.Integer(2**2, 2**10, name='a'),
     skopt.space.Integer(2**2, 2**10, name='b'),
-    skopt.space.Real(0.001, 0.5, name='lr', prior='log-uniform'),
+    skopt.space.Real(0.001, 0.1, name='lr', prior='log-uniform'),
     skopt.space.Real(0.0001, 1, name='drop', prior='log-uniform'),
     skopt.space.Integer(0, 2, name='lags')
     ]
@@ -124,11 +132,11 @@ epochs, a, b, drop, lr, lags = 20, 64, 32, 0.15, 0.01, 1
 @skopt.utils.use_named_args(space)
 def net(epochs, a, b, lr, drop, lags):
     if lags == 0:
-        lx = x[[col for col in x.columns if 'lag' not in col]].dropna()
+        lx = x[[col for col in x.columns if 'lag' not in str(col)]].dropna()
         ly = y.loc[lx.index]
     
     elif lags == 1:
-        lx = x[[col for col in x.columns if 'lag2' not in col]].dropna()
+        lx = x[[col for col in x.columns if 'lag2' not in str(col)]].dropna()
         ly = y.loc[lx.index]
     
     else:
@@ -172,7 +180,7 @@ def net(epochs, a, b, lr, drop, lags):
     return (- 1.0 * np.mean(f1))
         
 
-result = skopt.forest_minimize(net, space, acq_func='PI', x0=[20, 64, 32, 0.01, 0.15, 1])
+result = skopt.forest_minimize(net, space, acq_func='PI', x0=[24, 952, 37, 0.015, 0.08, 2])
 
 print(f'Max F1: {result.fun}')
 print(f'Parameters: {result.x}')
@@ -182,11 +190,11 @@ plots.plot_evaluations(result)
 # Validate Network #
 ####################
 if result.x[-1] == 0:
-    x = x[[col for col in x.columns if 'lag' not in col]].dropna()
+    x = x[[col for col in x.columns if 'lag' not in str(col)]].dropna()
     y = y.loc[x.index]
 
 elif result.x[-1] == 1:
-    x = x[[col for col in x.columns if 'lag2' not in col]].dropna()
+    x = x[[col for col in x.columns if 'lag2' not in str(col)]].dropna()
     y = y.loc[x.index]
 
 else:
@@ -257,10 +265,10 @@ for epoch in range(result.x[0]):
 # Predicting Full Audio #
 #########################
 if result.x[-1] == 0:
-    audio = audio[[col for col in audio.columns if 'lag' not in col]].dropna().reset_index(drop=True)
+    audio = audio[[col for col in audio.columns if 'lag' not in str(col)]].dropna().reset_index(drop=True)
 
 elif result.x[-1] == 1:
-    audio = audio[[col for col in audio.columns if 'lag2' not in col]].dropna().reset_index(drop=True)
+    audio = audio[[col for col in audio.columns if 'lag2' not in str(col)]].dropna().reset_index(drop=True)
 
 else:
     audio = audio.dropna().reset_index(drop=True)
