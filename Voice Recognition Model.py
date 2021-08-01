@@ -55,7 +55,13 @@ LEFT JOIN RAMSEY.dbo.AudioCoding AS code
 
 train_audio = pd.read_sql(query, con)
 
-query = '''SELECT * FROM RAMSEY.dbo.AudioCoding'''
+query = '''
+SELECT audio.*
+FROM RAMSEY.dbo.AudioCoding AS audio
+RIGHT JOIN RAMSEY.dbo.metadata AS meta
+    ON audio.id = meta.id
+WHERE meta.seconds <= 900
+'''
 audio = pd.read_sql(query, con)
 
 con.close()
@@ -84,8 +90,6 @@ lag2.columns = [f'{col}_lag2' for col in x.columns if col != 'id']
 x = x.merge(lag1, left_index=True, right_index=True)
 x = x.merge(lag2, left_index=True, right_index=True)
 x = x.drop('id', axis=1)
-
-
 
 transform = pd.DataFrame(scaler.transform(audio.drop(['id', 'second'], axis=1)), columns=audio.columns[2:])
 transform = audio[['id']].merge(transform, right_index=True, left_index=True)
@@ -252,6 +256,16 @@ for epoch in range(result.x[0]):
 #########################
 # Predicting Full Audio #
 #########################
+if result.x[-1] == 0:
+    audio = audio[[col for col in audio.columns if 'lag' not in col]].dropna().reset_index(drop=True)
+
+elif result.x[-1] == 1:
+    audio = audio[[col for col in audio.columns if 'lag2' not in col]].dropna().reset_index(drop=True)
+
+else:
+    audio = audio.dropna().reset_index(drop=True)
+
+
 # GPU barely too small to handle all the data, so just iterating over it
 predictions = pd.DataFrame(columns=['speaker', 'confidence'])
 i = 0
