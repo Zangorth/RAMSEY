@@ -18,7 +18,7 @@ kf = StratifiedKFold()
 device = torch.device('cuda:0')
 
 class Discriminator(nn.Module):
-    def __init__(self, a, b, drop, shape):
+    def __init__(self, a, b, c, drop, shape):
         super().__init__()
         self.model = nn.Sequential(
             nn.Linear(shape, a),
@@ -26,7 +26,10 @@ class Discriminator(nn.Module):
             nn.Dropout(drop),
             nn.Linear(a, b),
             nn.ReLU(),
-            nn.Linear(b, 10),
+            nn.Dropout(drop),
+            nn.Linear(b, c),
+            nn.ReLU(),
+            nn.Linear(c, 10),
             nn.Softmax(dim=1)
             )
         
@@ -47,8 +50,6 @@ con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   
 query = '''
 SET NOCOUNT ON
-
-DROP TABLE #speakers
 
 SELECT id, [second]
 INTO #speakers
@@ -139,6 +140,7 @@ space = [
     skopt.space.Integer(1, 30, name='epochs'),
     skopt.space.Integer(2**2, 2**10, name='a'),
     skopt.space.Integer(2**2, 2**10, name='b'),
+    skopt.space.Integer(2**2, 2**10, name='c'),
     skopt.space.Real(0.0001, 0.1, name='lr', prior='log-uniform'),
     skopt.space.Real(0.0001, 1, name='drop', prior='log-uniform'),
     skopt.space.Integer(0, 2, name='lags')
@@ -148,17 +150,19 @@ space = [
 epochs, a, b, drop, lr, lags = 20, 64, 32, 0.15, 0.01, 1
 
 @skopt.utils.use_named_args(space)
-def net(epochs, a, b, lr, drop, lags):
+def net(epochs, a, b, c, lr, drop, lags):
     if lags == 0:
-        lx = x[[col for col in x.columns if 'lag' not in str(col)]].dropna()
+        lx = x[[col for col in x.columns if 'lag' not in str(col)]]
+        lx = lx.loc[y != -1].dropna()
         ly = y.loc[lx.index]
     
     elif lags == 1:
-        lx = x[[col for col in x.columns if 'lag2' not in str(col)]].dropna()
+        lx = x[[col for col in x.columns if 'lag2' not in str(col)]]
+        lx = lx.loc[y != -1].dropna()
         ly = y.loc[lx.index]
     
     else:
-        lx = x.dropna()
+        lx = x.loc[y != -1].dropna()
         ly = y.loc[lx.index]
     
     lx, ly = lx.reset_index(drop=True), ly.reset_index(drop=True)
@@ -180,7 +184,7 @@ def net(epochs, a, b, lr, drop, lags):
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
     
         loss_function = nn.CrossEntropyLoss()
-        discriminator = Discriminator(a, b, drop, lx.shape[1]).to(device)
+        discriminator = Discriminator(a, b, c, drop, lx.shape[1]).to(device)
         optim = torch.optim.Adam(discriminator.parameters(), lr=lr)
     
         for epoch in range(epochs):
@@ -198,7 +202,7 @@ def net(epochs, a, b, lr, drop, lags):
     return (- 1.0 * np.mean(f1))
         
 
-result = skopt.forest_minimize(net, space, acq_func='PI', n_calls=200)
+result = skopt.forest_minimize(net, space, acq_func='PI')
 
 print(f'Max F1: {result.fun}')
 print(f'Parameters: {result.x}')
