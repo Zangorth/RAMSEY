@@ -46,14 +46,32 @@ con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   Trusted_Connection=yes;''')
                   
 query = '''
-SELECT speaker, YEAR(publish_date) AS 'publish_year', 
-    code.*
-FROM RAMSEY.dbo.AudioTraining AS train
+SET NOCOUNT ON
+
+DROP TABLE #speakers
+
+SELECT id, [second]
+INTO #speakers
+FROM RAMSEY.dbo.AudioTraining
+UNION
+SELECT id, [second]-1
+FROM RAMSEY.dbo.AudioTraining
+UNION
+SELECT id, [second]-2
+FROM RAMSEY.dbo.AudioTraining
+
+SELECT speaker , YEAR(publish_date) AS 'publish_year', code.*
+FROM #speakers
+LEFT JOIN RAMSEY.dbo.AudioTraining AS train
+    ON #speakers.id = train.id
+    AND #speakers.[second] = train.[second]
 LEFT JOIN RAMSEY.dbo.AudioCoding AS code
-    ON train.id = code.id
-    AND train.[second] = code.[second]
+    ON #speakers.id = code.id
+    AND #speakers.[second] = code.[second]
 LEFT JOIN RAMSEY.dbo.metadata AS meta
-    ON train.id = meta.id
+    ON #speakers.id = meta.id
+WHERE code.id IS NOT NULL
+ORDER BY id, [second]
 '''
 
 train_audio = pd.read_sql(query, con)
@@ -121,7 +139,7 @@ space = [
     skopt.space.Integer(1, 30, name='epochs'),
     skopt.space.Integer(2**2, 2**10, name='a'),
     skopt.space.Integer(2**2, 2**10, name='b'),
-    skopt.space.Real(0.001, 0.1, name='lr', prior='log-uniform'),
+    skopt.space.Real(0.0001, 0.1, name='lr', prior='log-uniform'),
     skopt.space.Real(0.0001, 1, name='drop', prior='log-uniform'),
     skopt.space.Integer(0, 2, name='lags')
     ]
@@ -176,11 +194,11 @@ def net(epochs, a, b, lr, drop, lags):
         test_hat = discriminator(x_test.float())
         f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='micro'))
     
-    print(np.mean(f1))
+    print(round(np.mean(f1), 2))
     return (- 1.0 * np.mean(f1))
         
 
-result = skopt.forest_minimize(net, space, acq_func='PI', x0=[24, 952, 37, 0.015, 0.08, 2])
+result = skopt.forest_minimize(net, space, acq_func='PI', n_calls=200)
 
 print(f'Max F1: {result.fun}')
 print(f'Parameters: {result.x}')
