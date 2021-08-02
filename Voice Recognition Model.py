@@ -29,7 +29,7 @@ class Discriminator(nn.Module):
             nn.Dropout(drop),
             nn.Linear(b, c),
             nn.ReLU(),
-            nn.Linear(c, 10),
+            nn.Linear(c, 9),
             nn.Softmax(dim=1)
             )
         
@@ -54,12 +54,15 @@ SET NOCOUNT ON
 SELECT id, [second]
 INTO #speakers
 FROM RAMSEY.dbo.AudioTraining
+WHERE speaker != 'M'
 UNION
 SELECT id, [second]-1
 FROM RAMSEY.dbo.AudioTraining
+WHERE speaker != 'M'
 UNION
 SELECT id, [second]-2
 FROM RAMSEY.dbo.AudioTraining
+WHERE speaker != 'M'
 
 SELECT speaker , YEAR(publish_date) AS 'publish_year', code.*
 FROM #speakers
@@ -71,7 +74,7 @@ LEFT JOIN RAMSEY.dbo.AudioCoding AS code
     AND #speakers.[second] = code.[second]
 LEFT JOIN RAMSEY.dbo.metadata AS meta
     ON #speakers.id = meta.id
-WHERE code.id IS NOT NULL
+WHERE code.id IS NOT NULL AND speaker != 'M'
 ORDER BY id, [second]
 '''
 
@@ -96,7 +99,7 @@ train_audio['y'] = train_audio['speaker'].astype('category').cat.codes
 y = train_audio['y']
 
 mapped = train_audio[['y', 'speaker']].drop_duplicates().reset_index(drop=True)
-mapped = mapped.sort_values('y')
+mapped = mapped.loc[mapped.y != -1].sort_values('y').reset_index(drop=True)
 
 years = pd.get_dummies(train_audio['publish_year'])
 x = train_audio.drop(['id', 'second', 'speaker', 'y', 'publish_year'], axis=1)
@@ -137,7 +140,7 @@ del [lag1, lag2, years]
 # Optimize Network #
 ####################
 space = [
-    skopt.space.Integer(1, 30, name='epochs'),
+    skopt.space.Integer(1, 50, name='epochs'),
     skopt.space.Integer(2**2, 2**10, name='a'),
     skopt.space.Integer(2**2, 2**10, name='b'),
     skopt.space.Integer(2**2, 2**10, name='c'),
@@ -201,26 +204,37 @@ def net(epochs, a, b, c, lr, drop, lags):
     print(round(np.mean(f1), 2))
     return (- 1.0 * np.mean(f1))
         
+optimize = True
+if optimize:
+    result = skopt.forest_minimize(net, space, acq_func='PI', n_calls=100, x0=[36,949,846,998,0.00011,0.00032,2])
+    print(f'Max F1: {result.fun}')
+    print(f'Parameters: {result.x}')
+    plots.plot_evaluations(result)
+    
+    result = {'epochs': result.x[0], 'a': result.x[1], 'b': result.x[2],
+              'c': result.x[3], 'lr': result.x[4], 'drop': result.x[5],
+              'lags': result.x[6]}
+    
+else:
+    result = {'epochs': 43, 'a': 748, 'b': 264, 'c': 298, 
+              'lr': 0.000146, 'drop': 0.00541, 'lags': 2}
 
-result = skopt.forest_minimize(net, space, acq_func='PI')
-
-print(f'Max F1: {result.fun}')
-print(f'Parameters: {result.x}')
-plots.plot_evaluations(result)
 
 ####################
 # Validate Network #
 ####################
-if result.x[-1] == 0:
-    x = x[[col for col in x.columns if 'lag' not in str(col)]].dropna()
+if result['lags'] == 0:
+    x = x[[col for col in x.columns if 'lag' not in str(col)]]
+    x = x.loc[y != -1].dropna()
     y = y.loc[x.index]
 
-elif result.x[-1] == 1:
+elif result['lags'] == 1:
     x = x[[col for col in x.columns if 'lag2' not in str(col)]].dropna()
+    x = x.loc[y != -1].dropna()
     y = y.loc[x.index]
 
 else:
-    x = x.dropna()
+    x = x.loc[y != -1].dropna()
     y = y.loc[x.index]
     
 x, y = x.reset_index(drop=True), y.reset_index(drop=True)
@@ -242,10 +256,10 @@ for i in range(0, 5):
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
 
     loss_function = nn.CrossEntropyLoss()
-    discriminator = Discriminator(result.x[1], result.x[2], result.x[4], x.shape[1]).to(device)
-    optim = torch.optim.Adam(discriminator.parameters(), lr=result.x[3])
+    discriminator = Discriminator(result['a'], result['b'], result['c'], result['drop'], x.shape[1]).to(device)
+    optim = torch.optim.Adam(discriminator.parameters(), lr=result['lr'])
 
-    for epoch in range(result.x[0]):
+    for epoch in range(result['epochs']):
         for i, (inputs, targets) in enumerate(train_loader):
             discriminator.zero_grad()
             yhat = discriminator(inputs.float())
@@ -271,10 +285,10 @@ train_set = [(x[i], y[i]) for i in range(len(y))]
 train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
 
 loss_function = nn.CrossEntropyLoss()
-discriminator = Discriminator(result.x[1], result.x[2], result.x[4], x.shape[1]).to(device)
-optim = torch.optim.Adam(discriminator.parameters(), lr=result.x[3])
+discriminator = Discriminator(result['a'], result['b'], result['c'], result['drop'], x.shape[1]).to(device)
+optim = torch.optim.Adam(discriminator.parameters(), lr=result['lr'])
 
-for epoch in range(result.x[0]):
+for epoch in range(result['epochs']):
     for i, (inputs, targets) in enumerate(train_loader):
         discriminator.zero_grad()
         yhat = discriminator(inputs.float())
@@ -286,10 +300,10 @@ for epoch in range(result.x[0]):
 #########################
 # Predicting Full Audio #
 #########################
-if result.x[-1] == 0:
+if result['lags'] == 0:
     audio = audio[[col for col in audio.columns if 'lag' not in str(col)]].dropna().reset_index(drop=True)
 
-elif result.x[-1] == 1:
+elif result['lags'] == 1:
     audio = audio[[col for col in audio.columns if 'lag2' not in str(col)]].dropna().reset_index(drop=True)
 
 else:
