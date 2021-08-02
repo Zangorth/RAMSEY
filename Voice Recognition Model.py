@@ -18,7 +18,7 @@ kf = StratifiedKFold()
 device = torch.device('cuda:0')
 
 class Discriminator(nn.Module):
-    def __init__(self, a, b, c, drop, shape):
+    def __init__(self, a, b, drop, shape):
         super().__init__()
         self.model = nn.Sequential(
             nn.Linear(shape, a),
@@ -26,10 +26,7 @@ class Discriminator(nn.Module):
             nn.Dropout(drop),
             nn.Linear(a, b),
             nn.ReLU(),
-            nn.Dropout(drop),
-            nn.Linear(b, c),
-            nn.ReLU(),
-            nn.Linear(c, 9),
+            nn.Linear(b, 10),
             nn.Softmax(dim=1)
             )
         
@@ -54,17 +51,15 @@ SET NOCOUNT ON
 SELECT id, [second]
 INTO #speakers
 FROM RAMSEY.dbo.AudioTraining
-WHERE speaker != 'M'
 UNION
 SELECT id, [second]-1
 FROM RAMSEY.dbo.AudioTraining
-WHERE speaker != 'M'
 UNION
 SELECT id, [second]-2
 FROM RAMSEY.dbo.AudioTraining
-WHERE speaker != 'M'
 
-SELECT speaker , YEAR(publish_date) AS 'publish_year', code.*
+SELECT speaker , YEAR(publish_date) AS 'publish_year', 
+    [source], code.*
 FROM #speakers
 LEFT JOIN RAMSEY.dbo.AudioTraining AS train
     ON #speakers.id = train.id
@@ -74,7 +69,7 @@ LEFT JOIN RAMSEY.dbo.AudioCoding AS code
     AND #speakers.[second] = code.[second]
 LEFT JOIN RAMSEY.dbo.metadata AS meta
     ON #speakers.id = meta.id
-WHERE code.id IS NOT NULL AND speaker != 'M'
+WHERE code.id IS NOT NULL
 ORDER BY id, [second]
 '''
 
@@ -97,6 +92,9 @@ con.close()
 ##############
 train_audio['y'] = train_audio['speaker'].astype('category').cat.codes
 y = train_audio['y']
+
+semi = train_audio['source']
+train_audio = train_audio.drop('source', axis=1)
 
 mapped = train_audio[['y', 'speaker']].drop_duplicates().reset_index(drop=True)
 mapped = mapped.loc[mapped.y != -1].sort_values('y').reset_index(drop=True)
@@ -158,25 +156,26 @@ def net(epochs, a, b, c, lr, drop, lags):
         lx = x[[col for col in x.columns if 'lag' not in str(col)]]
         lx = lx.loc[y != -1].dropna()
         ly = y.loc[lx.index]
+        ls = semi[lx.index]
     
     elif lags == 1:
         lx = x[[col for col in x.columns if 'lag2' not in str(col)]]
         lx = lx.loc[y != -1].dropna()
         ly = y.loc[lx.index]
+        ls = semi[lx.index]
     
     else:
         lx = x.loc[y != -1].dropna()
         ly = y.loc[lx.index]
+        ls = semi[lx.index]
     
-    lx, ly = lx.reset_index(drop=True), ly.reset_index(drop=True)
+    lx, ly, ls = lx.reset_index(drop=True), ly.reset_index(drop=True), ls.reset_index(drop=True)
     
     f1 = []
     for i in range(0, 5):
-        x_train = lx.groupby(ly).apply(lambda x: x.sample(frac=0.2))
-        x_train.index = [x_train.index[i][1] for i in range(len(x_train))]
-        x_train = x_train.sort_index()
+        x_test = lx.loc[ls == 'semi'].groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), 25))).sort_index()
+        x_train = lx.loc[~lx.index.isin(x_test.index)].sort_index()
         
-        x_test = lx.loc[~lx.index.isin(x_train.index)]
         y_train = ly.loc[x_train.index]
         y_test = ly.loc[~ly.index.isin(x_train.index)]
         
@@ -187,7 +186,7 @@ def net(epochs, a, b, c, lr, drop, lags):
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
     
         loss_function = nn.CrossEntropyLoss()
-        discriminator = Discriminator(a, b, c, drop, lx.shape[1]).to(device)
+        discriminator = Discriminator(a, b, drop, lx.shape[1]).to(device)
         optim = torch.optim.Adam(discriminator.parameters(), lr=lr)
     
         for epoch in range(epochs):
@@ -206,18 +205,17 @@ def net(epochs, a, b, c, lr, drop, lags):
         
 optimize = True
 if optimize:
-    result = skopt.forest_minimize(net, space, acq_func='PI', n_calls=100, x0=[36,949,846,998,0.00011,0.00032,2])
+    result = skopt.forest_minimize(net, space, acq_func='PI', n_calls=50, x0=[36,949,846,998,0.00011,0.00032,2])
     print(f'Max F1: {result.fun}')
     print(f'Parameters: {result.x}')
     plots.plot_evaluations(result)
     
     result = {'epochs': result.x[0], 'a': result.x[1], 'b': result.x[2],
-              'c': result.x[3], 'lr': result.x[4], 'drop': result.x[5],
-              'lags': result.x[6]}
+              'lr': result.x[4], 'drop': result.x[5], 'lags': result.x[6]}
     
 else:
-    result = {'epochs': 43, 'a': 748, 'b': 264, 'c': 298, 
-              'lr': 0.000146, 'drop': 0.00541, 'lags': 2}
+    result = {'epochs': 28, 'a': 896, 'b': 794, 
+              'lr': 0.000132, 'drop': 0.0106, 'lags': 2}
 
 
 ####################
@@ -227,25 +225,26 @@ if result['lags'] == 0:
     x = x[[col for col in x.columns if 'lag' not in str(col)]]
     x = x.loc[y != -1].dropna()
     y = y.loc[x.index]
+    semi = semi.loc[x.index]
 
 elif result['lags'] == 1:
     x = x[[col for col in x.columns if 'lag2' not in str(col)]].dropna()
     x = x.loc[y != -1].dropna()
     y = y.loc[x.index]
+    semi = semi.loc[x.index]
 
 else:
     x = x.loc[y != -1].dropna()
     y = y.loc[x.index]
+    semi = semi.loc[x.index]
     
-x, y = x.reset_index(drop=True), y.reset_index(drop=True)
+x, y, semi = x.reset_index(drop=True), y.reset_index(drop=True), semi.reset_index(drop=True)
 
 f1 = []
 for i in range(0, 5):
-    x_train = x.groupby(y).apply(lambda x: x.sample(frac=0.2))
-    x_train.index = [x_train.index[i][1] for i in range(len(x_train))]
-    x_train = x_train.sort_index()
+    x_test = x.loc[semi == 'semi'].groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), 25))).sort_index()
+    x_train = x.loc[~x.index.isin(x_test.index)].sort_index()
     
-    x_test = x.loc[~x.index.isin(x_train.index)]
     y_train = y.loc[x_train.index]
     y_test = y.loc[~y.index.isin(x_train.index)]
     
@@ -256,7 +255,7 @@ for i in range(0, 5):
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
 
     loss_function = nn.CrossEntropyLoss()
-    discriminator = Discriminator(result['a'], result['b'], result['c'], result['drop'], x.shape[1]).to(device)
+    discriminator = Discriminator(result['a'], result['b'], result['drop'], x.shape[1]).to(device)
     optim = torch.optim.Adam(discriminator.parameters(), lr=result['lr'])
 
     for epoch in range(result['epochs']):
@@ -285,7 +284,7 @@ train_set = [(x[i], y[i]) for i in range(len(y))]
 train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
 
 loss_function = nn.CrossEntropyLoss()
-discriminator = Discriminator(result['a'], result['b'], result['c'], result['drop'], x.shape[1]).to(device)
+discriminator = Discriminator(result['a'], result['b'], result['drop'], x.shape[1]).to(device)
 optim = torch.optim.Adam(discriminator.parameters(), lr=result['lr'])
 
 for epoch in range(result['epochs']):
