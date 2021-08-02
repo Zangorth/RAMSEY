@@ -1,3 +1,4 @@
+from sklearn.metrics import f1_score, recall_score, accuracy_score
 from sqlalchemy import create_engine
 from pydub.playback import play
 from pydub import AudioSegment
@@ -104,11 +105,15 @@ for i in range(len(samples)):
 ##############################
 # Semi - Supervised Learning #
 ##############################
-upload = pd.DataFrame(columns=['id', 'second', 'speaker', 'source'])
+upload = pd.DataFrame(columns=['id', 'second', 'label', 'speaker', 'source'])
 
-samples = semi.sample(500).reset_index(drop=True)
+samples = semi.groupby('speaker', group_keys=False).apply(lambda x: x.sample(min(len(x), 50)))
+samples = samples.reset_index(drop=True)
 
-for i in range(len(samples)):
+test = True
+source = 'test' if test else 'semi'
+
+for i in range(287, len(samples)):
     sample = int(samples['id'][i])
     second = samples['second'][i]
     label = samples['speaker'][i]
@@ -122,7 +127,7 @@ for i in range(len(samples)):
     while speaker == 0:
         play(sound)
 
-        speaker = input(f'({upload.index.max()}/{len(samples)}) Speaker {label}? ')
+        speaker = input(f'({len(upload)+1}/{len(samples)}) Speaker {label}? ')
         speaker = 0 if speaker == '0' else speaker
 
         if speaker == '':
@@ -132,9 +137,29 @@ for i in range(len(samples)):
             speaker = 0
             
     upload = upload.append(pd.DataFrame({'id': [sample], 'second': [second], 
-                                         'speaker': [speaker], 'source': 'semi'}),
+                                         'label': label, 'speaker': [speaker], 'source': source}),
                            ignore_index=True, sort=False)
+  
+if test:
+    print('F1')
+    print(pd.DataFrame(f1_score(upload.speaker, upload.label, average=None)))
+    print('')
+    print('Recall')
+    pd.DataFrame(recall_score(upload.speaker, upload.label, average=None))
     
+    conn_str = (
+        r'Driver={SQL Server};'
+        r'Server=ZANGORTH\HOMEBASE;'
+        r'Database=RAMSEY;'
+        r'Trusted_Connection=yes;'
+    )
+    con = urllib.parse.quote_plus(conn_str)
+    engine = create_engine(f'mssql+pyodbc:///?odbc_connect={con}')
+    upload.to_sql(name='AudioTesting', con=engine, schema='dbo', if_exists='replace', index=False)
+    
+upload = upload[['id', 'second', 'speaker', 'source']]
+upload['source'] = 'semi'
+
 conn_str = (
         r'Driver={SQL Server};'
         r'Server=ZANGORTH\HOMEBASE;'
