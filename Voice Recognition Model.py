@@ -11,6 +11,8 @@ import urllib
 import skopt
 import torch
 
+full = False
+
 ####################
 # Define Functions #
 ####################
@@ -39,7 +41,6 @@ class Discriminator(nn.Module):
 #############
 # Read Data #
 #############
-
 # Training Audio
 con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   Server=ZANGORTH\HOMEBASE; DATABASE=RAMSEY; 
@@ -75,15 +76,16 @@ ORDER BY id, [second]
 
 train_audio = pd.read_sql(query, con)
 
-query = '''
-SELECT YEAR(publish_date) AS 'publish_year', 
-    audio.*
-FROM RAMSEY.dbo.AudioCoding AS audio
-RIGHT JOIN RAMSEY.dbo.metadata AS meta
-    ON audio.id = meta.id
-WHERE meta.seconds <= 900
-'''
-audio = pd.read_sql(query, con)
+if full:
+    query = '''
+    SELECT YEAR(publish_date) AS 'publish_year', 
+        audio.*
+    FROM RAMSEY.dbo.AudioCoding AS audio
+    RIGHT JOIN RAMSEY.dbo.metadata AS meta
+        ON audio.id = meta.id
+    WHERE meta.seconds <= 900
+    '''
+    audio = pd.read_sql(query, con)
 
 con.close()
 
@@ -117,20 +119,21 @@ x = x.merge(lag2, left_index=True, right_index=True)
 x = x.merge(years, left_index=True, right_index=True)
 x = x.drop('id', axis=1)
 
-transform = pd.DataFrame(scaler.transform(audio.drop(['id', 'second', 'publish_year'], axis=1)), columns=audio.columns[3:])
-transform = audio[['id']].merge(transform, right_index=True, left_index=True)
-
-lag1 = transform.groupby('id').shift(1)
-lag1.columns = [f'{col}_lag1' for col in transform.columns if col != 'id']
-
-lag2 = transform.groupby('id').shift(2)
-lag2.columns = [f'{col}_lag1' for col in transform.columns if col != 'id']
-years = pd.get_dummies(audio['publish_year'])
-
-audio = audio[['id', 'second']].merge(transform.drop('id', axis=1), right_index=True, left_index=True)
-audio = audio.merge(lag1, right_index=True, left_index=True)
-audio = audio.merge(lag2, right_index=True, left_index=True)
-audio = audio.merge(years, right_index=True, left_index=True).dropna().reset_index(drop=True)
+if full:
+    transform = pd.DataFrame(scaler.transform(audio.drop(['id', 'second', 'publish_year'], axis=1)), columns=audio.columns[3:])
+    transform = audio[['id']].merge(transform, right_index=True, left_index=True)
+    
+    lag1 = transform.groupby('id').shift(1)
+    lag1.columns = [f'{col}_lag1' for col in transform.columns if col != 'id']
+    
+    lag2 = transform.groupby('id').shift(2)
+    lag2.columns = [f'{col}_lag1' for col in transform.columns if col != 'id']
+    years = pd.get_dummies(audio['publish_year'])
+    
+    audio = audio[['id', 'second']].merge(transform.drop('id', axis=1), right_index=True, left_index=True)
+    audio = audio.merge(lag1, right_index=True, left_index=True)
+    audio = audio.merge(lag2, right_index=True, left_index=True)
+    audio = audio.merge(years, right_index=True, left_index=True).dropna().reset_index(drop=True)
 
 del [lag1, lag2, years]
 
@@ -269,6 +272,7 @@ for i in range(0, 5):
     test_hat = discriminator(x_test.float())
     f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='micro'))
     print(f'Accuracy: {accuracy_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1))}')
+    print(f'F1: {f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average="micro")}')
     mapped['f1'] = f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average=None)
     mapped['recall'] = recall_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average=None)
     print(mapped)
