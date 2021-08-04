@@ -1,17 +1,25 @@
 from sklearn.metrics import f1_score, recall_score, accuracy_score
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import StratifiedKFold
+from sklearn.exceptions import ConvergenceWarning
 from sqlalchemy import create_engine
 from sklearn import preprocessing
+from xgboost import XGBClassifier
 from skopt import plots
 import pyodbc as sql
 from torch import nn
 import pandas as pd
 import numpy as np
+import warnings
 import urllib
 import skopt
 import torch
 
 full = False
+
+warnings.filterwarnings('error', category=ConvergenceWarning)
+warnings.filterwarnings(action='ignore', category=UserWarning)
 
 ####################
 # Define Functions #
@@ -141,12 +149,17 @@ del [lag1, lag2, years]
 # Optimize Network #
 ####################
 space = [
+    skopt.space.Categorical(['logit', 'rfc', 'gbc', 'nn'], name='model'),
     skopt.space.Integer(1, 50, name='epochs'),
     skopt.space.Integer(2**2, 2**10, name='a'),
     skopt.space.Integer(2**2, 2**10, name='b'),
     skopt.space.Integer(2**2, 2**10, name='c'),
-    skopt.space.Real(0.0001, 0.1, name='lr', prior='log-uniform'),
+    skopt.space.Real(0.0001, 0.1, name='lr_nn', prior='log-uniform'),
     skopt.space.Real(0.0001, 1, name='drop', prior='log-uniform'),
+    skopt.space.Integer(50, 500, name='n_samples'),
+    skopt.space.Integer(50, 500, name='n_estimators'),
+    skopt.space.Integer(1, 10, name='max_depth'),
+    skopt.space.Real(0.0001, 0.1, name='lr_gbc', prior='log-uniform'), 
     skopt.space.Integer(0, 2, name='lags')
     ]
 
@@ -154,7 +167,8 @@ space = [
 epochs, a, b, drop, lr, lags = 20, 64, 32, 0.15, 0.01, 1
 
 @skopt.utils.use_named_args(space)
-def net(epochs, a, b, c, lr, drop, lags):
+def net(model, epochs, a, b, c, lr_nn, drop, n_samples, n_estimators, max_depth, lr_gbc, lags):
+    print(model)
     if lags == 0:
         lx = x[[col for col in x.columns if 'lag' not in str(col)]]
         lx = lx.loc[y != -1].dropna()
@@ -182,39 +196,63 @@ def net(epochs, a, b, c, lr, drop, lags):
         y_train = ly.loc[x_train.index]
         y_test = ly.loc[~ly.index.isin(x_train.index)]
         
-        x_train, x_test = torch.from_numpy(x_train.values).to(device), torch.from_numpy(x_test.values).to(device)
-        y_train, y_test = torch.from_numpy(y_train.values).to(device), torch.from_numpy(y_test.values).to(device)
+        if model == 'logit':
+            try:
+                discriminator = LogisticRegression(max_iter=500)
+                discriminator.fit(x_train, y_train)
+                predictions = discriminator.predict(x_test)
+                f1.append(f1_score(y_test, predictions, average='micro'))
+            except ConvergenceWarning:
+                f1.append(0)
+            
+        elif model == 'rfc':
+            discriminator = RandomForestClassifier(n_estimators=n_samples, n_jobs=-1)
+            discriminator.fit(x_train, y_train)
+            predictions = discriminator.predict(x_test)
+            f1.append(f1_score(y_test, predictions, average='micro'))
         
-        train_set = [(x_train[i].to(device), y_train[i].to(device)) for i in range(len(y_train))]
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
+        elif model == 'gbc':
+            discriminator = XGBClassifier(n_estimators=n_estimators, learning_rate=lr_gbc, 
+                                          max_depth=max_depth, n_jobs=-1, use_label_encoder=False,
+                                          objective='multi:softmax', eval_metric='mlogloss')
+            discriminator.fit(x_train, y_train)
+            predictions = discriminator.predict(x_test)
+            f1.append(f1_score(y_test, predictions, average='micro'))
+        
+        elif model == 'nn':
+            x_train, x_test = torch.from_numpy(x_train.values).to(device), torch.from_numpy(x_test.values).to(device)
+            y_train, y_test = torch.from_numpy(y_train.values).to(device), torch.from_numpy(y_test.values).to(device)
+            
+            train_set = [(x_train[i].to(device), y_train[i].to(device)) for i in range(len(y_train))]
+            train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
+        
+            loss_function = nn.CrossEntropyLoss()
+            discriminator = Discriminator(a, b, drop, lx.shape[1]).to(device)
+            optim = torch.optim.Adam(discriminator.parameters(), lr=lr_nn)
+        
+            for epoch in range(epochs):
+                for i, (inputs, targets) in enumerate(train_loader):
+                    discriminator.zero_grad()
+                    yhat = discriminator(inputs.float())
+                    loss = loss_function(yhat, targets.long())
+                    loss.backward()
+                    optim.step()
+                    
+            test_hat = discriminator(x_test.float())
+            f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='micro'))
     
-        loss_function = nn.CrossEntropyLoss()
-        discriminator = Discriminator(a, b, drop, lx.shape[1]).to(device)
-        optim = torch.optim.Adam(discriminator.parameters(), lr=lr)
-    
-        for epoch in range(epochs):
-            for i, (inputs, targets) in enumerate(train_loader):
-                discriminator.zero_grad()
-                yhat = discriminator(inputs.float())
-                loss = loss_function(yhat, targets.long())
-                loss.backward()
-                optim.step()
-                
-        test_hat = discriminator(x_test.float())
-        f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='micro'))
-    
-    print(round(np.mean(f1), 2))
+    print(f'{model}: {round(np.mean(f1), 2)}')
     return (- 1.0 * np.mean(f1))
         
 optimize = True
 if optimize:
-    result = skopt.forest_minimize(net, space, acq_func='PI', n_calls=50, x0=[36,949,846,998,0.00011,0.00032,2])
+    result = skopt.forest_minimize(net, space, acq_func='PI', n_calls=100)
     print(f'Max F1: {result.fun}')
     print(f'Parameters: {result.x}')
     plots.plot_evaluations(result)
     
-    result = {'epochs': result.x[0], 'a': result.x[1], 'b': result.x[2],
-              'lr': result.x[4], 'drop': result.x[5], 'lags': result.x[6]}
+    #result = {'epochs': result.x[0], 'a': result.x[1], 'b': result.x[2],
+    #          'lr': result.x[4], 'drop': result.x[5], 'lags': result.x[6]}
     
 else:
     result = {'epochs': 28, 'a': 896, 'b': 794, 
