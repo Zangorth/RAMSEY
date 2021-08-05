@@ -35,8 +35,6 @@ class Discriminator(nn.Module):
         
         i = 0
         while i < layers:
-            print(transforms[i])
-            print(transforms[i+1])
             sequential[f'linear_{i}'] = nn.Linear(transforms[i], transforms[i+1])
             sequential[f'relu_{i}'] = nn.ReLU()
             sequential[f'drop_{i}'] = nn.Dropout(drop)
