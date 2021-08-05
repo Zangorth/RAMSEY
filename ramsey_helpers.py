@@ -2,6 +2,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.exceptions import ConvergenceWarning
 from sklearn.metrics import f1_score
+from collections import OrderedDict
 from xgboost import XGBClassifier
 from torch import nn
 import numpy as np
@@ -26,23 +27,31 @@ def lags(x, group, lags, exclude = []):
     return out
 
 class Discriminator(nn.Module):
-    def __init__(self, a, b, drop, shape):
+    def __init__(self, shape, transforms, drop, output, layers=3):
         super().__init__()
-        self.model = nn.Sequential(
-            nn.Linear(shape, a),
-            nn.ReLU(),
-            nn.Dropout(drop),
-            nn.Linear(a, b),
-            nn.ReLU(),
-            nn.Linear(b, 10),
-            nn.Softmax(dim=1)
-            )
         
+        transforms = [shape] + transforms
+        sequential = OrderedDict()
+        
+        i = 0
+        while i < layers:
+            print(transforms[i])
+            print(transforms[i+1])
+            sequential[f'linear_{i}'] = nn.Linear(transforms[i], transforms[i+1])
+            sequential[f'relu_{i}'] = nn.ReLU()
+            sequential[f'drop_{i}'] = nn.Dropout(drop)
+            i+=1
+            
+        sequential['linear_final'] = nn.Linear(transforms[i], output)
+        sequential['softmax'] = nn.Softmax(dim=1)
+        
+        self.model = nn.Sequential(sequential)
         
     def forward(self, x):
         output = self.model(x)
         return output
-    
+            
+            
 def cv_logit(x, y, semi):
     f1 = []
     
@@ -99,7 +108,7 @@ def cv_gbc(x, y, semi, n_estimators, lr_gbc, max_depth):
     
     return np.mean(f1)
 
-def cv_nn(x, y, semi, a, b, drop, lr_nn, epochs):
+def cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, output=10):
     f1 = []
     
     for i in range(5):
@@ -117,7 +126,7 @@ def cv_nn(x, y, semi, a, b, drop, lr_nn, epochs):
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
     
         loss_function = nn.CrossEntropyLoss()
-        discriminator = Discriminator(a, b, drop, col_count).to(device)
+        discriminator = Discriminator(col_count, transforms, drop, output).to(device)
         optim = torch.optim.Adam(discriminator.parameters(), lr=lr_nn)
     
         for epoch in range(epochs):
