@@ -1,11 +1,7 @@
 from sklearn.metrics import f1_score, recall_score, accuracy_score
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import StratifiedKFold
 from sklearn.exceptions import ConvergenceWarning
 from sqlalchemy import create_engine
 from sklearn import preprocessing
-from xgboost import XGBClassifier
 from skopt import plots
 import pyodbc as sql
 from torch import nn
@@ -15,36 +11,15 @@ import warnings
 import urllib
 import skopt
 import torch
+import sys
+
+sys.path.append(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey')
+import ramsey_helpers as RH
 
 full = False
 
 warnings.filterwarnings('error', category=ConvergenceWarning)
 warnings.filterwarnings(action='ignore', category=UserWarning)
-
-####################
-# Define Functions #
-####################
-kf = StratifiedKFold()
-device = torch.device('cuda:0')
-
-class Discriminator(nn.Module):
-    def __init__(self, a, b, drop, shape):
-        super().__init__()
-        self.model = nn.Sequential(
-            nn.Linear(shape, a),
-            nn.ReLU(),
-            nn.Dropout(drop),
-            nn.Linear(a, b),
-            nn.ReLU(),
-            nn.Linear(b, 10),
-            nn.Softmax(dim=1)
-            )
-        
-        
-    def forward(self, x):
-        output = self.model(x)
-        return output
-
 
 #############
 # Read Data #
@@ -116,44 +91,26 @@ scaler = preprocessing.StandardScaler().fit(x)
 x = pd.DataFrame(scaler.transform(x), columns=train_audio.columns[4:-1])
 x = train_audio[['id']].merge(x, left_index=True, right_index=True)
 
-lag1 = x.groupby('id').shift(1)
-lag1.columns = [f'{col}_lag1' for col in x.columns if col != 'id']
-
-lag2 = x.groupby('id').shift(2)
-lag2.columns = [f'{col}_lag2' for col in x.columns if col != 'id']
-
-x = x.merge(lag1, left_index=True, right_index=True)
-x = x.merge(lag2, left_index=True, right_index=True)
 x = x.merge(years, left_index=True, right_index=True)
-x = x.drop('id', axis=1)
 
 if full:
     transform = pd.DataFrame(scaler.transform(audio.drop(['id', 'second', 'publish_year'], axis=1)), columns=audio.columns[3:])
     transform = audio[['id']].merge(transform, right_index=True, left_index=True)
     
-    lag1 = transform.groupby('id').shift(1)
-    lag1.columns = [f'{col}_lag1' for col in transform.columns if col != 'id']
-    
-    lag2 = transform.groupby('id').shift(2)
-    lag2.columns = [f'{col}_lag1' for col in transform.columns if col != 'id']
     years = pd.get_dummies(audio['publish_year'])
     
     audio = audio[['id', 'second']].merge(transform.drop('id', axis=1), right_index=True, left_index=True)
-    audio = audio.merge(lag1, right_index=True, left_index=True)
-    audio = audio.merge(lag2, right_index=True, left_index=True)
     audio = audio.merge(years, right_index=True, left_index=True).dropna().reset_index(drop=True)
-
-del [lag1, lag2, years]
 
 ####################
 # Optimize Network #
 ####################
 space = [
-    skopt.space.Categorical(['logit', 'rfc', 'gbc', 'nn'], name='model'),
+    skopt.space.Categorical(['nn', 'gbc'], name='model'),
+    #skopt.space.Categorical(['logit', 'rfc', 'gbc', 'nn'], name='model'),
     skopt.space.Integer(1, 50, name='epochs'),
     skopt.space.Integer(2**2, 2**10, name='a'),
     skopt.space.Integer(2**2, 2**10, name='b'),
-    skopt.space.Integer(2**2, 2**10, name='c'),
     skopt.space.Real(0.0001, 0.1, name='lr_nn', prior='log-uniform'),
     skopt.space.Real(0.0001, 1, name='drop', prior='log-uniform'),
     skopt.space.Integer(50, 500, name='n_samples'),
@@ -164,85 +121,41 @@ space = [
     ]
 
 
-epochs, a, b, drop, lr, lags = 20, 64, 32, 0.15, 0.01, 1
+space = [
+    skopt.space.Categorical(['rfc'], name='model'),
+    skopt.space.Integer(0, 2, name='lags'),
+    skopt.space.Integer(50, 500, name='n_samples')
+    ]
 
 @skopt.utils.use_named_args(space)
-def net(model, epochs, a, b, c, lr_nn, drop, n_samples, n_estimators, max_depth, lr_gbc, lags):
-    print(model)
-    if lags == 0:
-        lx = x[[col for col in x.columns if 'lag' not in str(col)]]
-        lx = lx.loc[y != -1].dropna()
-        ly = y.loc[lx.index]
-        ls = semi[lx.index]
-    
-    elif lags == 1:
-        lx = x[[col for col in x.columns if 'lag2' not in str(col)]]
-        lx = lx.loc[y != -1].dropna()
-        ly = y.loc[lx.index]
-        ls = semi[lx.index]
-    
-    else:
-        lx = x.loc[y != -1].dropna()
-        ly = y.loc[lx.index]
-        ls = semi[lx.index]
+def net(model, lags, n_samples=None, n_estimators=None, lr_gbc=None, 
+        max_depth=None, a=None, b=None, drop=None, lr_nn=None, epochs=None):
+    lx = RH.lags(x, 'id', lags)
+    lx = lx.loc[y != -1].drop('id', axis=1).dropna()
+    ly, ls = y.loc[lx.index], semi[lx.index]
     
     lx, ly, ls = lx.reset_index(drop=True), ly.reset_index(drop=True), ls.reset_index(drop=True)
     
-    f1 = []
-    for i in range(0, 5):
-        x_test = lx.loc[ls == 'semi'].groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), 25))).sort_index()
-        x_train = lx.loc[~lx.index.isin(x_test.index)].sort_index()
-        
-        y_train = ly.loc[x_train.index]
-        y_test = ly.loc[~ly.index.isin(x_train.index)]
-        
-        if model == 'logit':
-            try:
-                discriminator = LogisticRegression(max_iter=500)
-                discriminator.fit(x_train, y_train)
-                predictions = discriminator.predict(x_test)
-                f1.append(f1_score(y_test, predictions, average='micro'))
-            except ConvergenceWarning:
-                f1.append(0)
-            
-        elif model == 'rfc':
-            discriminator = RandomForestClassifier(n_estimators=n_samples, n_jobs=-1)
-            discriminator.fit(x_train, y_train)
-            predictions = discriminator.predict(x_test)
-            f1.append(f1_score(y_test, predictions, average='micro'))
-        
-        elif model == 'gbc':
-            discriminator = XGBClassifier(n_estimators=n_estimators, learning_rate=lr_gbc, 
-                                          max_depth=max_depth, n_jobs=-1, use_label_encoder=False,
-                                          objective='multi:softmax', eval_metric='mlogloss')
-            discriminator.fit(x_train, y_train)
-            predictions = discriminator.predict(x_test)
-            f1.append(f1_score(y_test, predictions, average='micro'))
-        
-        elif model == 'nn':
-            x_train, x_test = torch.from_numpy(x_train.values).to(device), torch.from_numpy(x_test.values).to(device)
-            y_train, y_test = torch.from_numpy(y_train.values).to(device), torch.from_numpy(y_test.values).to(device)
-            
-            train_set = [(x_train[i].to(device), y_train[i].to(device)) for i in range(len(y_train))]
-            train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
-        
-            loss_function = nn.CrossEntropyLoss()
-            discriminator = Discriminator(a, b, drop, lx.shape[1]).to(device)
-            optim = torch.optim.Adam(discriminator.parameters(), lr=lr_nn)
-        
-            for epoch in range(epochs):
-                for i, (inputs, targets) in enumerate(train_loader):
-                    discriminator.zero_grad()
-                    yhat = discriminator(inputs.float())
-                    loss = loss_function(yhat, targets.long())
-                    loss.backward()
-                    optim.step()
-                    
-            test_hat = discriminator(x_test.float())
-            f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='micro'))
+    model = 'logit'
     
-    print(f'{model}: {round(np.mean(f1), 2)}')
-    return (- 1.0 * np.mean(f1))
+    if model == 'logit':
+        f1 = RH.cv_logit(lx, ly, ls)
+        
+    elif model == 'rfc':
+        f1 = RH.cv_rfc(lx, ly, ls, n_samples)
+        
+    elif model == 'gbc':
+        f1 = RH.cv_gbc(lx, ly, ls, n_estimators, lr_gbc, max_depth)
+        
+    elif model == 'nn':
+        f1 = RH.cv_nn(lx, ly, ls, a, b, drop, lr_nn, epochs)
+        
+    else:
+        print('Improperly Specified Model')
+        f1 = 0
+    
+    print(f'{model}: {round(f1, 2)}')
+    return (- 1.0 * f1)
         
 optimize = True
 if optimize:
