@@ -15,8 +15,9 @@ device = torch.device('cuda:0')
 warnings.filterwarnings('error', category=ConvergenceWarning)
 
 
-def lags(x, group, lags, exclude = []):
+def shift(x, group, lags, leads, exclude = []):
     out = x.copy()
+    exclude = out[exclude]
     out = out[[col for col in out.columns if col not in exclude]]
     
     for i in range(lags):
@@ -25,6 +26,13 @@ def lags(x, group, lags, exclude = []):
         
         out = out.merge(lag, left_index=True, right_index=True)
         
+    for i in range(leads):
+        lead = x.groupby(group).shift(-i)
+        lead.columns = [f'{col}_lead{i}' for col in lead.columns]
+        
+        out = out.merge(lead, left_index=True, right_index=True)
+        
+    out = out.merge(exclude, left_index=True, right_index=True)
     return out
 
 class Discriminator(nn.Module):
