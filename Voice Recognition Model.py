@@ -20,6 +20,7 @@ import ramsey_helpers as RH
 
 year_continuous = True
 full = True
+optimize = False
 
 warnings.filterwarnings('error', category=ConvergenceWarning)
 warnings.filterwarnings(action='ignore', category=UserWarning)
@@ -211,7 +212,6 @@ def net(model, lags, leads, n_samples=None, n_estimators=None, lr_gbc=None, max_
     print(f'({i}/{calls}) {model}: {round(f1, 2)}')
     return (- 1.0 * f1)
         
-optimize = True
 if optimize:
     result = skopt.forest_minimize(net, space, acq_func='PI', n_initial_points=10, n_calls=calls, n_jobs=-1)
     
@@ -273,19 +273,11 @@ for epoch in range(results['epochs']):
         loss.backward()
         optim.step()
 
+discriminator.eval()
 
 #########################
 # Predicting Full Audio #
 #########################
-if result['lags'] == 0:
-    audio = audio[[col for col in audio.columns if 'lag' not in str(col)]].dropna().reset_index(drop=True)
-
-elif result['lags'] == 1:
-    audio = audio[[col for col in audio.columns if 'lag2' not in str(col)]].dropna().reset_index(drop=True)
-
-else:
-    audio = audio.dropna().reset_index(drop=True)
-
 
 # GPU barely too small to handle all the data, so just iterating over it
 predictions = pd.DataFrame(columns=['speaker', 'confidence'])
@@ -293,7 +285,11 @@ i = 0
 while i <= len(audio):
     print(f'{i}:{i+100000} / {len(audio)}')
     
-    audio_x = torch.from_numpy(audio.drop(['id', 'second'], axis=1)[i:i+100000].values).float()
+    audio_x = audio.iloc[i:i+100000]
+    audio_x = RH.shift(audio_x, 'id', results['lags'], results['leads'], exclude=['second'] + list(years.columns))
+    audio_x = audio_x.dropna()
+    
+    audio_x = torch.from_numpy(audio_x.drop(['id', 'second'], axis=1).values).float()
     
     append = pd.DataFrame({'speaker_id': np.argmax(discriminator(audio_x.to(device)).cpu().detach().numpy(), axis=1),
                            'confidence': np.max(discriminator(audio_x.to(device)).cpu().detach().numpy(), axis=1)})
@@ -304,8 +300,8 @@ while i <= len(audio):
     i+=100000
     
     
-predictions = audio[['id', 'second']].merge(predictions, right_index=True, left_index=True, how='outer')
-    
+predictions = audio[['id', 'second']].merge(predictions, right_index=True, left_index=True, how='right')
+
 conn_str = (
         r'Driver={SQL Server};'
         r'Server=ZANGORTH\HOMEBASE;'
