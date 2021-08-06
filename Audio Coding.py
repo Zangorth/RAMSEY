@@ -8,10 +8,11 @@ import urllib
 import sys
 import os
 
-os.chdir(r'C:\Users\Samuel\Audio\Audio Full')
 sys.path.append(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey')
-from extract_audio import extract_audio
+from ramsey_helpers import extract_audio
 warnings.filterwarnings('ignore')
+
+os.chdir(r'C:\Users\Samuel\Audio\Audio Full')
 
 
 con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
