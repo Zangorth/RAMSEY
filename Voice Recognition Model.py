@@ -2,7 +2,7 @@ from sklearn.metrics import f1_score, recall_score, accuracy_score
 from sklearn.exceptions import ConvergenceWarning
 from sqlalchemy import create_engine
 from sklearn import preprocessing
-from skopt import plots
+from datetime import datetime
 import pyodbc as sql
 from torch import nn
 import pandas as pd
@@ -16,6 +16,7 @@ import sys
 sys.path.append(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey')
 import ramsey_helpers as RH
 
+year_continuous = True
 full = False
 
 warnings.filterwarnings('error', category=ConvergenceWarning)
@@ -84,14 +85,32 @@ train_audio = train_audio.drop('source', axis=1)
 mapped = train_audio[['y', 'speaker']].drop_duplicates().reset_index(drop=True)
 mapped = mapped.loc[mapped.y != -1].sort_values('y').reset_index(drop=True)
 
-years = pd.get_dummies(train_audio['publish_year'])
-x = train_audio.drop(['id', 'second', 'speaker', 'y', 'publish_year'], axis=1)
+if year_continuous:
+    years = pd.DataFrame(datetime.today().year - train_audio.publish_year)
+    years['publish_year_2'] = years.publish_year ** 2
+    years['publish_year_3'] = years.publish_year ** 3
+    years.columns = ['year1', 'year2', 'year3']
+    
+    x = train_audio.drop(['id', 'second', 'speaker', 'y', 'publish_year'], axis=1)
+    x = x.merge(years, left_index=True, right_index=True)
+    
+    save_cols = x.columns
+    
+    scaler = preprocessing.StandardScaler().fit(x)
+    x = pd.DataFrame(scaler.transform(x), columns=save_cols)
+    x = train_audio[['id']].merge(x, left_index=True, right_index=True)
 
-scaler = preprocessing.StandardScaler().fit(x)
-x = pd.DataFrame(scaler.transform(x), columns=train_audio.columns[4:-1])
-x = train_audio[['id']].merge(x, left_index=True, right_index=True)
+else:
+    years = pd.get_dummies(train_audio['publish_year'])
+    x = train_audio.drop(['id', 'second', 'speaker', 'y', 'publish_year'], axis=1)
+    
+    save_cols = x.columns
+    
+    scaler = preprocessing.StandardScaler().fit(x)
+    x = pd.DataFrame(scaler.transform(x), columns=save_cols)
+    x = train_audio[['id']].merge(x, left_index=True, right_index=True)
 
-x = x.merge(years, left_index=True, right_index=True)
+    x = x.merge(years, left_index=True, right_index=True)
 
 if full:
     transform = pd.DataFrame(scaler.transform(audio.drop(['id', 'second', 'publish_year'], axis=1)), columns=audio.columns[3:])
@@ -105,38 +124,44 @@ if full:
 ####################
 # Optimize Network #
 ####################
+calls, max_f1 = 100, []
+max_shift = 3
 space = [
-    skopt.space.Categorical(['nn', 'gbc'], name='model'),
-    #skopt.space.Categorical(['logit', 'rfc', 'gbc', 'nn'], name='model'),
+    skopt.space.Categorical(['nn'], name='model'),
+    skopt.space.Integer(0, max_shift, name='lags'),
+    skopt.space.Integer(0, max_shift, name='leads'),
+    #skopt.space.Integer(50, 500, name='n_samples'),
+    #skopt.space.Integer(50, 500, name='n_estimators'),
+    #skopt.space.Real(0.0001, 0.1, name='lr_gbc', prior='log-uniform'),
+    skopt.space.Integer(1, 10, name='layers'),
     skopt.space.Integer(1, 50, name='epochs'),
-    skopt.space.Integer(2**2, 2**10, name='a'),
-    skopt.space.Integer(2**2, 2**10, name='b'),
-    skopt.space.Real(0.0001, 0.1, name='lr_nn', prior='log-uniform'),
     skopt.space.Real(0.0001, 1, name='drop', prior='log-uniform'),
-    skopt.space.Integer(50, 500, name='n_samples'),
-    skopt.space.Integer(50, 500, name='n_estimators'),
-    skopt.space.Integer(1, 10, name='max_depth'),
-    skopt.space.Real(0.0001, 0.1, name='lr_gbc', prior='log-uniform'), 
-    skopt.space.Integer(0, 2, name='lags')
+    skopt.space.Real(0.0001, 0.1, name='lr_nn', prior='log-uniform')
     ]
 
+space = space + [skopt.space.Integer(2**2, 2**10, name=f'transform_{i}') for i in range(10)]
+#space = space + [skopt.space.Integer(0, 1, name=f'column_{i}') for i in range((len(x.columns)-1)*(max_lags+1))]
 
-space = [
-    skopt.space.Categorical(['rfc'], name='model'),
-    skopt.space.Integer(0, 2, name='lags'),
-    skopt.space.Integer(50, 500, name='n_samples')
-    ]
+tracker, i = [], 0
 
 @skopt.utils.use_named_args(space)
-def net(model, lags, n_samples=None, n_estimators=None, lr_gbc=None, 
-        max_depth=None, a=None, b=None, drop=None, lr_nn=None, epochs=None):
-    lx = RH.lags(x, 'id', lags)
+def net(model, lags, leads, n_samples=None, n_estimators=None, lr_gbc=None, max_depth=None, 
+        drop=None, lr_nn=None, epochs=None, layers=None, **kwargs):
+    lx = RH.shift(x, 'id', lags, leads, exclude=years.columns)
     lx = lx.loc[y != -1].drop('id', axis=1).dropna()
     ly, ls = y.loc[lx.index], semi[lx.index]
     
     lx, ly, ls = lx.reset_index(drop=True), ly.reset_index(drop=True), ls.reset_index(drop=True)
     
-    model = 'logit'
+    if 'column_0' in kwargs:
+        select_cols = [kwargs[key] for key in kwargs if 'column' in key]
+        select_cols = [lx.columns[i] for i in range(len(lx.columns)) if select_cols[i] == 1]
+        lx = lx[select_cols]
+        
+    else:
+        select_cols = None
+    
+    transform = None if 'transform_0' not in kwargs else [kwargs[key] for key in kwargs if 'transform' in key]
     
     if model == 'logit':
         f1 = RH.cv_logit(lx, ly, ls)
@@ -148,28 +173,31 @@ def net(model, lags, n_samples=None, n_estimators=None, lr_gbc=None,
         f1 = RH.cv_gbc(lx, ly, ls, n_estimators, lr_gbc, max_depth)
         
     elif model == 'nn':
-        f1 = RH.cv_nn(lx, ly, ls, a, b, drop, lr_nn, epochs)
+        f1 = RH.cv_nn(lx, ly, ls, transform, drop, lr_nn, epochs, layers=layers)
+        #cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, output=10)
         
     else:
         print('Improperly Specified Model')
         f1 = 0
     
-    print(f'{model}: {round(f1, 2)}')
+    global i
+    i += 1
+    
+    global tracker
+    tracker.append([model, lags, n_samples, n_estimators, lr_gbc, max_depth,
+                    drop, lr_nn, epochs, layers, transform, select_cols])
+    
+    print(f'({i}/{calls}) {model}: {round(f1, 2)}')
     return (- 1.0 * f1)
         
 optimize = True
 if optimize:
-    result = skopt.forest_minimize(net, space, acq_func='PI', n_calls=100)
+    result = skopt.forest_minimize(net, space, acq_func='PI', n_initial_points=10, n_calls=calls, n_jobs=4)
+    skopt.plots.plot_evaluations(result, plot_dims=['lags', 'leads', 'layers', 'epochs', 'drop', 'lr_nn'])
+    
+    max_f1.append(result)
     print(f'Max F1: {result.fun}')
     print(f'Parameters: {result.x}')
-    plots.plot_evaluations(result)
-    
-    #result = {'epochs': result.x[0], 'a': result.x[1], 'b': result.x[2],
-    #          'lr': result.x[4], 'drop': result.x[5], 'lags': result.x[6]}
-    
-else:
-    result = {'epochs': 28, 'a': 896, 'b': 794, 
-              'lr': 0.000132, 'drop': 0.0106, 'lags': 2}
 
 
 ####################
