@@ -1,10 +1,11 @@
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.exceptions import ConvergenceWarning
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, accuracy_score
 from collections import OrderedDict
 from xgboost import XGBClassifier
 from torch import nn
+import pandas as pd
 import numpy as np
 import warnings
 import librosa
@@ -17,8 +18,7 @@ warnings.filterwarnings('error', category=ConvergenceWarning)
 
 def shift(x, group, lags, leads, exclude = []):
     out = x.copy()
-    exclude = out[exclude]
-    out = out[[col for col in out.columns if col not in exclude]]
+    x = out[[col for col in out.columns if col not in exclude]]
     
     for i in range(lags):
         lag = x.groupby(group).shift(i)
@@ -32,7 +32,6 @@ def shift(x, group, lags, leads, exclude = []):
         
         out = out.merge(lead, left_index=True, right_index=True)
         
-    out = out.merge(exclude, left_index=True, right_index=True)
     return out
 
 class Discriminator(nn.Module):
@@ -116,10 +115,10 @@ def cv_gbc(x, y, semi, n_estimators, lr_gbc, max_depth):
     
     return np.mean(f1)
 
-def cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, output=10, layers=3):
+def cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, layers=3, output=10, prin=False):
     f1 = []
     
-    for i in range(5):
+    for i in range(20):
         x_test = x.loc[semi == 'semi'].groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), 25))).sort_index()
         x_train = x.loc[~x.index.isin(x_test.index)].sort_index()
         
@@ -131,7 +130,7 @@ def cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, output=10, layers=3):
         y_train, y_test = torch.from_numpy(y_train.values).to(device), torch.from_numpy(y_test.values).to(device)
         
         train_set = [(x_train[i].to(device), y_train[i].to(device)) for i in range(len(y_train))]
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
+        train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**10, shuffle=True)
     
         loss_function = nn.CrossEntropyLoss()
         discriminator = Discriminator(col_count, transforms, drop, output, layers).to(device)
@@ -147,6 +146,13 @@ def cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, output=10, layers=3):
                 
         test_hat = discriminator(x_test.float())
         f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='micro'))
+        
+        if prin:
+            print(f'Accuracy: {accuracy_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1))}')
+            print('')
+            print('F1')
+            print(pd.DataFrame(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average=None)))
+            
     
     return np.mean(f1)
 
