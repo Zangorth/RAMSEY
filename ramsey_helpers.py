@@ -7,6 +7,7 @@ from xgboost import XGBClassifier
 from torch import nn
 import numpy as np
 import warnings
+import librosa
 import torch
 
 device = torch.device('cuda:0')
@@ -80,7 +81,7 @@ def cv_rfc(x, y, semi, n_estimators):
         y_train = y.loc[x_train.index]
         y_test = y.loc[x_test.index]
         
-        discriminator = RandomForestClassifier(n_estimators=n_estimators, n_jobs=4)
+        discriminator = RandomForestClassifier(n_estimators=n_estimators, n_jobs=8)
         discriminator.fit(x_train, y_train)
         predictions = discriminator.predict(x_test)
         f1.append(f1_score(y_test, predictions, average='micro'))
@@ -98,15 +99,16 @@ def cv_gbc(x, y, semi, n_estimators, lr_gbc, max_depth):
         y_test = y.loc[x_test.index]
     
         discriminator = XGBClassifier(n_estimators=n_estimators, learning_rate=lr_gbc, 
-                                      max_depth=max_depth, n_jobs=4, use_label_encoder=False,
-                                      objective='multi:softmax', eval_metric='mlogloss')
+                                      max_depth=max_depth, n_jobs=10, use_label_encoder=False,
+                                      objective='multi:softmax', eval_metric='mlogloss',
+                                      tree_method='gpu_hist')
         discriminator.fit(x_train, y_train)
         predictions = discriminator.predict(x_test)
         f1.append(f1_score(y_test, predictions, average='micro'))
     
     return np.mean(f1)
 
-def cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, output=10):
+def cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, output=10, layers=3):
     f1 = []
     
     for i in range(5):
@@ -124,7 +126,7 @@ def cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, output=10):
         train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
     
         loss_function = nn.CrossEntropyLoss()
-        discriminator = Discriminator(col_count, transforms, drop, output).to(device)
+        discriminator = Discriminator(col_count, transforms, drop, output, layers).to(device)
         optim = torch.optim.Adam(discriminator.parameters(), lr=lr_nn)
     
         for epoch in range(epochs):
@@ -139,3 +141,38 @@ def cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, output=10):
         f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='micro'))
     
     return np.mean(f1)
+
+
+class ParameterError(Exception):
+    pass
+
+def extract_audio(sound):
+    warnings.filterwarnings('ignore')
+    try:
+        file = sound[0]
+        cut = sound[1]
+        sound = sound[2]
+        
+        y, rate = librosa.load(sound.export(format='wav'), res_type='kaiser_fast')
+        mfccs = np.mean(librosa.feature.mfcc(y, rate, n_mfcc=40).T,axis=0)
+        stft = np.abs(librosa.stft(y))
+        chroma = np.mean(librosa.feature.chroma_stft(S=stft, sr=rate).T,axis=0)
+        mel = np.mean(librosa.feature.melspectrogram(y, sr=rate).T,axis=0)
+        contrast = np.mean(librosa.feature.spectral_contrast(S=stft, sr=rate).T,axis=0)
+        tonnetz = np.mean(librosa.feature.tonnetz(y=librosa.effects.harmonic(y), sr=rate).T,axis=0)
+        
+        features = list(mfccs) + list(chroma) + list(mel) + list(contrast) + list(tonnetz)
+        features = [float(f) for f in features]
+        features = [file, cut] + features
+        
+    except ValueError:
+        features = []
+        
+    except ParameterError:
+        features = []
+    
+    except Exception:
+        features = []
+    
+    return features
+
