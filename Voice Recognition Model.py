@@ -1,14 +1,16 @@
-from sklearn.metrics import f1_score, recall_score, accuracy_score
 from sklearn.exceptions import ConvergenceWarning
+from matplotlib import pyplot as plt
 from sqlalchemy import create_engine
 from sklearn import preprocessing
 from datetime import datetime
+import seaborn as sea
 import pyodbc as sql
 from torch import nn
 import pandas as pd
 import numpy as np
 import warnings
 import urllib
+import pickle
 import skopt
 import torch
 import sys
@@ -17,10 +19,11 @@ sys.path.append(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey')
 import ramsey_helpers as RH
 
 year_continuous = True
-full = False
+full = True
 
 warnings.filterwarnings('error', category=ConvergenceWarning)
 warnings.filterwarnings(action='ignore', category=UserWarning)
+device = torch.device('cuda:0')
 
 #############
 # Read Data #
@@ -113,19 +116,37 @@ else:
     x = x.merge(years, left_index=True, right_index=True)
 
 if full:
-    transform = pd.DataFrame(scaler.transform(audio.drop(['id', 'second', 'publish_year'], axis=1)), columns=audio.columns[3:])
-    transform = audio[['id']].merge(transform, right_index=True, left_index=True)
+    if year_continuous:
+        years = pd.DataFrame(datetime.today().year - audio.publish_year)
+        years['publish_year_2'] = years.publish_year ** 2
+        years['publish_year_3'] = years.publish_year ** 3
+        years.columns = ['year1', 'year2', 'year3']
+        
+        transform = audio.drop(['id', 'second', 'publish_year'], axis=1).merge(years, left_index=True, right_index=True)
+        
+        save_cols = transform.columns
+        
+        transform = pd.DataFrame(scaler.transform(transform), columns=save_cols)
+        
+        audio = audio[['id', 'second']].merge(transform, right_index=True, left_index=True)
+            
     
-    years = pd.get_dummies(audio['publish_year'])
-    
-    audio = audio[['id', 'second']].merge(transform.drop('id', axis=1), right_index=True, left_index=True)
-    audio = audio.merge(years, right_index=True, left_index=True).dropna().reset_index(drop=True)
+    else:
+        transform = audio.drop(['id', 'second', 'publish_year'], axis=1)
+        save_cols = transform.columns
+        
+        transform = pd.Dataframe(scaler.transform(transform), columns=save_cols)
+        
+        years = pd.get_dummies(audio['publish_year'])
+        
+        audio = audio[['id', 'second']].merge(transform, right_index=True, left_index=True)
+        audio = audio.merge(years, right_index=True, left_index=True).dropna().reset_index(drop=True)
 
 ####################
 # Optimize Network #
 ####################
 calls, max_f1 = 100, []
-max_shift = 3
+max_shift = 5
 space = [
     skopt.space.Categorical(['nn'], name='model'),
     skopt.space.Integer(0, max_shift, name='lags'),
@@ -133,10 +154,10 @@ space = [
     #skopt.space.Integer(50, 500, name='n_samples'),
     #skopt.space.Integer(50, 500, name='n_estimators'),
     #skopt.space.Real(0.0001, 0.1, name='lr_gbc', prior='log-uniform'),
-    skopt.space.Integer(1, 10, name='layers'),
-    skopt.space.Integer(1, 50, name='epochs'),
-    skopt.space.Real(0.0001, 1, name='drop', prior='log-uniform'),
-    skopt.space.Real(0.0001, 0.1, name='lr_nn', prior='log-uniform')
+    skopt.space.Integer(1, 3, name='layers'),
+    skopt.space.Integer(1, 100, name='epochs'),
+    skopt.space.Real(0.0001, 0.2, name='drop', prior='log-uniform'),
+    skopt.space.Real(0.00001, 0.04, name='lr_nn', prior='log-uniform')
     ]
 
 space = space + [skopt.space.Integer(2**2, 2**10, name=f'transform_{i}') for i in range(10)]
@@ -192,70 +213,44 @@ def net(model, lags, leads, n_samples=None, n_estimators=None, lr_gbc=None, max_
         
 optimize = True
 if optimize:
-    result = skopt.forest_minimize(net, space, acq_func='PI', n_initial_points=10, n_calls=calls, n_jobs=4)
-    skopt.plots.plot_evaluations(result, plot_dims=['lags', 'leads', 'layers', 'epochs', 'drop', 'lr_nn'])
+    result = skopt.forest_minimize(net, space, acq_func='PI', n_initial_points=10, n_calls=calls, n_jobs=-1)
+    
+    features = {'lags': 1, 'leads': 2, 'layers': 3, 'epochs': 4, 'drop': 5, 'lr': 6}
+    
+    for feature in features:
+        print(features[feature])
+        vals = [result.x_iters[i][features[feature]] for i in range(len(result.x_iters))]
+        sea.distplot(vals, kde=False)
+        plt.title(feature)
+        plt.show()
+        plt.close()
     
     max_f1.append(result)
     print(f'Max F1: {result.fun}')
     print(f'Parameters: {result.x}')
+    
+    results = {'model': result.x[0], 'lags': result.x[1], 'leads': result.x[2], 
+               'layers': result.x[3], 'epochs': result.x[4], 'drop': result.x[5],
+               'lr_nn': result.x[6], 'transform': [result.x[i] for i in range(7, len(result.x))]}
+    
+    pickle.dump(results, open('results.pkl', 'wb'))
+else:
+    results = pickle.load(open('results.pkl', 'rb'))
 
 
 ####################
 # Validate Network #
 ####################
-if result['lags'] == 0:
-    x = x[[col for col in x.columns if 'lag' not in str(col)]]
-    x = x.loc[y != -1].dropna()
-    y = y.loc[x.index]
-    semi = semi.loc[x.index]
+x = RH.shift(x, 'id', results['lags'], results['leads'], exclude=years.columns)
+x = x.loc[y != -1].drop('id', axis=1).dropna()
+y, semi = y.loc[x.index], semi[x.index]
 
-elif result['lags'] == 1:
-    x = x[[col for col in x.columns if 'lag2' not in str(col)]].dropna()
-    x = x.loc[y != -1].dropna()
-    y = y.loc[x.index]
-    semi = semi.loc[x.index]
-
-else:
-    x = x.loc[y != -1].dropna()
-    y = y.loc[x.index]
-    semi = semi.loc[x.index]
-    
 x, y, semi = x.reset_index(drop=True), y.reset_index(drop=True), semi.reset_index(drop=True)
 
-f1 = []
-for i in range(0, 5):
-    x_test = x.loc[semi == 'semi'].groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), 25))).sort_index()
-    x_train = x.loc[~x.index.isin(x_test.index)].sort_index()
-    
-    y_train = y.loc[x_train.index]
-    y_test = y.loc[~y.index.isin(x_train.index)]
-    
-    x_train, x_test = torch.from_numpy(x_train.values).to(device), torch.from_numpy(x_test.values).to(device)
-    y_train, y_test = torch.from_numpy(y_train.values).to(device), torch.from_numpy(y_test.values).to(device)
-    
-    train_set = [(x_train[i].to(device), y_train[i].to(device)) for i in range(len(y_train))]
-    train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**7, shuffle=True)
 
-    loss_function = nn.CrossEntropyLoss()
-    discriminator = Discriminator(result['a'], result['b'], result['drop'], x.shape[1]).to(device)
-    optim = torch.optim.Adam(discriminator.parameters(), lr=result['lr'])
-
-    for epoch in range(result['epochs']):
-        for i, (inputs, targets) in enumerate(train_loader):
-            discriminator.zero_grad()
-            yhat = discriminator(inputs.float())
-            loss = loss_function(yhat, targets.long())
-            loss.backward()
-            optim.step()
-            
-    test_hat = discriminator(x_test.float())
-    f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='micro'))
-    print(f'Accuracy: {accuracy_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1))}')
-    print(f'F1: {f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average="micro")}')
-    mapped['f1'] = f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average=None)
-    mapped['recall'] = recall_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average=None)
-    print(mapped)
-    print('')
+f1 = RH.cv_nn(x, y, semi, results['transform'], results['drop'], results['lr_nn'], 
+              results['epochs'], results['layers'], prin=True)
+    
 
 
 #################
@@ -267,10 +262,10 @@ train_set = [(x[i], y[i]) for i in range(len(y))]
 train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
 
 loss_function = nn.CrossEntropyLoss()
-discriminator = Discriminator(result['a'], result['b'], result['drop'], x.shape[1]).to(device)
-optim = torch.optim.Adam(discriminator.parameters(), lr=result['lr'])
+discriminator = RH.Discriminator(x.shape[1], results['transform'], results['drop'], 10).to(device)
+optim = torch.optim.Adam(discriminator.parameters(), lr=results['lr_nn'])
 
-for epoch in range(result['epochs']):
+for epoch in range(results['epochs']):
     for i, (inputs, targets) in enumerate(train_loader):
         discriminator.zero_grad()
         yhat = discriminator(inputs.float())
