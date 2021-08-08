@@ -35,12 +35,12 @@ for i in range(len(incomplete)):
     print(f'Progress: {i}/{len(incomplete)}')
     
     sound = AudioSegment.from_file(incomplete[i])
-    iterables = [[int(incomplete[i].replace('.mp3', '')), cut, sound[cut*1000:cut*1000+3000]] for cut in range(int(round(len(sound)/1000, 0)))]
+    iterables = [[int(incomplete[i].replace('.mp3', '')), cut, sound[cut*1000:cut*1000+1000]] for cut in range(int(round(len(sound)/1000, 0)))]
     
     with mp.Pool(10) as pool:
         out = pool.map(extract_audio, iterables)
         
-    out = [ls for ls in out if ls != []]
+    out = [clip for clip in out if clip != []]
     panda = pd.DataFrame(out, columns=columns)
         
     conn_str = (
