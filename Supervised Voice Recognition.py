@@ -12,7 +12,12 @@ con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   Server=ZANGORTH\HOMEBASE; DATABASE=RAMSEY; 
                   Trusted_Connection=yes;''')
                   
-query = 'SELECT id, second FROM RAMSEY.dbo.AudioCoding'
+query = '''
+SELECT AudioCoding.id, second, metadata.link
+FROM RAMSEY.dbo.AudioCoding
+LEFT JOIN RAMSEY.DBO.metadata
+    ON AudioCoding.id = metadata.id
+'''
 panda = pd.read_sql(query, con)
 
 con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
@@ -26,12 +31,14 @@ FROM RAMSEY.dbo.predictions
 semi = pd.read_sql(query, con)
 
 
+
 query = '''
 SELECT DISTINCT id, second, 1 AS 'found'
 FROM RAMSEY.dbo.AudioTraining
 '''
 
 checked = pd.read_sql(query, con)
+
 con.close()
 
 
@@ -39,28 +46,7 @@ con.close()
 #######################
 # Supervised Learning #
 #######################
-# Identify videos in which each personality is a cohost so we can get a good sample
-    # for all of their voices. Hogan and wright are particularly hard since she doesn't
-    # cohost very often and he isn't a host anymore. 
-#coleman = [21, 53, 59, 83, 114, 307, 358, 359]
-#deloney = [8, 59, 80, 114, 124, 130, 139, 149, 372]
-#wright = [103, 261, 276, 321]
-#ao = [21, 35, 71, 77, 83, 102, 115, 124, 130, 446, 487]
-#cruze = [315, 375, 378, 384, 389, 391, 550]
-#hogan = [336, 337, 339, 343, 347, 367, 405, 430, 454, 458, 601, 623, 682, 689, 693, 722]
-#samples = list(set(coleman + deloney + wright + ao + cruze + hogan))
-
-full = True
-
-if full:
-    samples = pd.DataFrame({'id': [21, 53, 59, 83, 103, 114, 232, 261, 276, 315, 321, 336, 337, 339, 375, 378, 391,
-                                   1359, 1372, 4188, 5059, 5061],
-                            'second': 0})
-    start = 0
-
-else:
-    samples = panda.sample(120).sort_values(['id', 'second']).reset_index(drop=True)
-    start = 10000
+samples = panda.sample(4000).reset_index(drop=True)
     
 
 for i in range(len(samples)):
@@ -70,32 +56,28 @@ for i in range(len(samples)):
     upload = pd.DataFrame(columns=['id', 'second', 'speaker', 'source'])
     
     sound = AudioSegment.from_file(f'C:\\Users\\Samuel\\Audio\\Audio Full\\{sample}.mp3')
-    sound = sound if full else sound[second*1000-10000:second*1000+20000]
+    lead = sound[second*1000-5000: second*1000+5000]
+    sound = sound[second*1000:second*1000+1000]
+        
+    speaker = 0
     
-    for cut in range(start, len(sound), 1000):
-        print(f'ID: {sample} | Second: {(cut-10000)/1000}')
-        
-        label = sound[cut:cut+1000]
-        lead = sound[cut-10000:cut+1000]
-        
-        speaker = 0
-        
-        while speaker == 0:
-            play(label)
+    while speaker == 0:
+        play(sound)
 
-            speaker = input('Speaker: ')
-            speaker = 0 if speaker == '0' else speaker
+        speaker = input(f'({i+1}/{len(samples)}) Speaker: ')
+        speaker = 0 if speaker == '0' else speaker
 
-            if speaker == 'lead':
-                play(lead)
-                speaker = 0
-        
-        
-        upload = upload.append(pd.DataFrame({'id': [sample], 'second': [second], 
-                                             'speaker': [speaker], 'source': 'supervised'}),
-                               ignore_index=True, sort=False)
-        
-        second += 1
+        if str(speaker).lower() == 'lead':
+            play(lead)
+            speaker = 0
+            
+        elif str(speaker).lower() == 'show':
+            print(samples.link[i])
+            speaker == 0
+    
+    
+    upload = pd.DataFrame({'id': [sample], 'second': [second], 'speaker': [speaker], 'source': 'supervised'})
+    
                 
     conn_str = (
         r'Driver={SQL Server};'
@@ -117,7 +99,7 @@ upload = pd.DataFrame(columns=['id', 'second', 'label', 'speaker', 'source'])
 samples = semi.groupby('speaker', group_keys=False).apply(lambda x: x.sample(min(len(x), 100)))
 samples = samples.reset_index(drop=True)
 samples = samples.merge(checked, how='left', on=['id', 'second'])
-samples = samples.loc[samples.found.isnull(), ['id', 'second', 'speaker']]
+samples = samples.loc[samples.found.isnull(), ['id', 'second', 'speaker']].reset_index(drop=True)
 
 for i in range(len(samples)):
     sample = int(samples['id'][i])
