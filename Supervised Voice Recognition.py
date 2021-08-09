@@ -1,4 +1,3 @@
-from sklearn.metrics import f1_score, recall_score
 from sqlalchemy import create_engine
 from pydub.playback import play
 from pydub import AudioSegment
@@ -15,8 +14,6 @@ con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   
 query = 'SELECT id, second FROM RAMSEY.dbo.AudioCoding'
 panda = pd.read_sql(query, con)
-con.close()
-
 
 con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   Server=ZANGORTH\HOMEBASE; DATABASE=RAMSEY; 
@@ -27,7 +24,17 @@ SELECT *
 FROM RAMSEY.dbo.predictions
 '''
 semi = pd.read_sql(query, con)
+
+
+query = '''
+SELECT DISTINCT id, second, 1 AS 'found'
+FROM RAMSEY.dbo.AudioTraining
+'''
+
+checked = pd.read_sql(query, con)
 con.close()
+
+
 
 #######################
 # Supervised Learning #
@@ -109,6 +116,8 @@ upload = pd.DataFrame(columns=['id', 'second', 'label', 'speaker', 'source'])
 
 samples = semi.groupby('speaker', group_keys=False).apply(lambda x: x.sample(min(len(x), 100)))
 samples = samples.reset_index(drop=True)
+samples = samples.merge(checked, how='left', on=['id', 'second'])
+samples = samples.loc[samples.found.isnull(), ['id', 'second', 'speaker']]
 
 for i in range(len(samples)):
     sample = int(samples['id'][i])
