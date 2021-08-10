@@ -2,6 +2,8 @@ from sklearn.exceptions import ConvergenceWarning
 from matplotlib import pyplot as plt
 from sqlalchemy import create_engine
 from sklearn import preprocessing
+from pydub.playback import play
+from pydub import AudioSegment
 from datetime import datetime
 import seaborn as sea
 import pyodbc as sql
@@ -19,8 +21,8 @@ sys.path.append(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey')
 import ramsey_helpers as RH
 
 year_continuous = True
-full = True
-optimize = False
+full = False
+optimize = True
 
 warnings.filterwarnings('error', category=ConvergenceWarning)
 warnings.filterwarnings(action='ignore', category=UserWarning)
@@ -83,7 +85,6 @@ con.close()
 train_audio['y'] = train_audio['speaker'].astype('category').cat.codes
 y = train_audio['y']
 
-semi = train_audio['source']
 train_audio = train_audio.drop('source', axis=1)
 
 mapped = train_audio[['y', 'speaker']].drop_duplicates().reset_index(drop=True)
@@ -171,9 +172,9 @@ def net(model, lags, leads, n_samples=None, n_estimators=None, lr_gbc=None, max_
         drop=None, lr_nn=None, epochs=None, layers=None, **kwargs):
     lx = RH.shift(x, 'id', lags, leads, exclude=years.columns)
     lx = lx.loc[y != -1].drop('id', axis=1).dropna()
-    ly, ls = y.loc[lx.index], semi[lx.index]
+    ly = y.loc[lx.index]
     
-    lx, ly, ls = lx.reset_index(drop=True), ly.reset_index(drop=True), ls.reset_index(drop=True)
+    lx, ly = lx.reset_index(drop=True), ly.reset_index(drop=True)
     
     if 'column_0' in kwargs:
         select_cols = [kwargs[key] for key in kwargs if 'column' in key]
@@ -245,13 +246,56 @@ x = RH.shift(x, 'id', results['lags'], results['leads'], exclude=years.columns)
 x = x.loc[y != -1].drop('id', axis=1).dropna()
 y, semi = y.loc[x.index], semi[x.index]
 
+test_audio = train_audio.iloc[x.index]
+
 x, y, semi = x.reset_index(drop=True), y.reset_index(drop=True), semi.reset_index(drop=True)
 
 
 f1 = RH.cv_nn(x, y, semi, results['transform'], results['drop'], results['lr_nn'], 
-              results['epochs'], results['layers'], prin=True)
-    
+              results['epochs'], results['layers'], prin=True, wrong=True)
 
+f1['pred'] = f1.merge(mapped, how='left', left_on='pred', right_on='y')['speaker']
+f1['real'] = f1.merge(mapped, how='left', left_on='real', right_on='y')['speaker']
+
+
+##################################
+# Double Check Wrong Predictions #
+##################################
+check = False
+
+if check:
+    test_audio = test_audio.iloc[f1['index']]
+    test_audio = test_audio[['id', 'second', 'speaker']].reset_index(drop=True)
+    test_audio = test_audio.merge(f1, left_index=True, right_index=True)
+    
+    for i in range(len(test_audio)):
+        sample = test_audio['id'][i]
+        cut = test_audio['second'][i]*1000
+        label = test_audio['speaker'][i]
+        pred = test_audio['pred'][i]
+        
+        sound = AudioSegment.from_file(f'C:\\Users\\Samuel\\Audio\\Audio Full\\{sample}.mp3')
+        
+        lead = sound[cut-10000:cut+1000]
+        sound = sound[cut:cut+1000]
+        
+        speaker = 0
+            
+        while speaker == 0:
+            play(sound)
+    
+            speaker = input(f'Speaker {label} or {pred}? ')
+            speaker = 0 if speaker == '0' else speaker
+    
+            if speaker == 'lead':
+                play(lead)
+                speaker = 0
+                
+            elif speaker == '' or speaker == 0:
+                pass
+            
+            else:
+                print(f'UPDATE: {sample} {cut/1000}: {label} -> {speaker}')
 
 #################
 # Train Network #

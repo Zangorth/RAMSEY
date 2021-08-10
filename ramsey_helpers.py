@@ -58,11 +58,11 @@ class Discriminator(nn.Module):
         return output
             
             
-def cv_logit(x, y, semi):
+def cv_logit(x, y):
     f1 = []
     
     for i in range(5):
-        x_test = x.loc[semi == 'semi'].groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), 25))).sort_index()
+        x_test = x.groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), 25))).sort_index()
         x_train = x.loc[~x.index.isin(x_test.index)].sort_index()
         
         y_train = y.loc[x_train.index]
@@ -82,7 +82,7 @@ def cv_rfc(x, y, semi, n_estimators):
     f1 = []
     
     for i in range(5):
-        x_test = x.loc[semi == 'semi'].groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), 25))).sort_index()
+        x_test = x.groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), 25))).sort_index()
         x_train = x.loc[~x.index.isin(x_test.index)].sort_index()
         
         y_train = y.loc[x_train.index]
@@ -99,7 +99,7 @@ def cv_gbc(x, y, semi, n_estimators, lr_gbc, max_depth):
     f1 = []
     
     for i in range(5):
-        x_test = x.loc[semi == 'semi'].groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), 25))).sort_index()
+        x_test = x.groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), 25))).sort_index()
         x_train = x.loc[~x.index.isin(x_test.index)].sort_index()
         
         y_train = y.loc[x_train.index]
@@ -115,15 +115,18 @@ def cv_gbc(x, y, semi, n_estimators, lr_gbc, max_depth):
     
     return np.mean(f1)
 
-def cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, layers=3, output=10, prin=False):
+def cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, layers=3, output=9, prin=False, wrong=False):
+    comp = pd.DataFrame(columns=['index', 'real', 'pred'])
     f1 = []
     
     for i in range(20):
-        x_test = x.loc[semi == 'semi'].groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), 25))).sort_index()
+        x_test = x.groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), 25))).sort_index()
         x_train = x.loc[~x.index.isin(x_test.index)].sort_index()
         
         y_train = y.loc[x_train.index]
         y_test = y.loc[x_test.index]
+        
+        test = x_test.index
         
         col_count = x_train.shape[1]
         x_train, x_test = torch.from_numpy(x_train.values).to(device), torch.from_numpy(x_test.values).to(device)
@@ -149,12 +152,20 @@ def cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, layers=3, output=10, prin
         
         if prin:
             print(f'Accuracy: {accuracy_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1))}')
-            print('')
             print('F1')
             print(pd.DataFrame(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average=None)))
+            print('')
             
+        if wrong:
+            comp = comp.append(pd.DataFrame({'index': test, 'real':y_test.cpu().numpy(), 'pred':np.argmax(test_hat.cpu().detach().numpy(), axis=1)}),
+                               ignore_index=True, sort=False)
+            comp = comp.loc[comp.real != comp.pred]
+        
+    if wrong:
+        return comp.drop_duplicates().reset_index(drop=True)
     
-    return np.mean(f1)
+    else:
+        return np.mean(f1)
 
 
 class ParameterError(Exception):
