@@ -115,12 +115,12 @@ def cv_gbc(x, y, semi, n_estimators, lr_gbc, max_depth):
     
     return np.mean(f1)
 
-def cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, layers=3, output=9, prin=False, wrong=False):
+def cv_nn(x, y, transforms, drop, lr_nn, epochs, layers=3, output=9, cv_size=25, prin=False, wrong=False):
     comp = pd.DataFrame(columns=['index', 'real', 'pred'])
     f1 = []
     
     for i in range(20):
-        x_test = x.groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), 25))).sort_index()
+        x_test = x.groupby(y, group_keys=False).apply(lambda x: x.sample(min(len(x), cv_size))).sort_index()
         x_train = x.loc[~x.index.isin(x_test.index)].sort_index()
         
         y_train = y.loc[x_train.index]
@@ -133,7 +133,7 @@ def cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, layers=3, output=9, prin=
         y_train, y_test = torch.from_numpy(y_train.values).to(device), torch.from_numpy(y_test.values).to(device)
         
         train_set = [(x_train[i].to(device), y_train[i].to(device)) for i in range(len(y_train))]
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**10, shuffle=True)
+        train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**6, shuffle=True)
     
         loss_function = nn.CrossEntropyLoss()
         discriminator = Discriminator(col_count, transforms, drop, output, layers).to(device)
