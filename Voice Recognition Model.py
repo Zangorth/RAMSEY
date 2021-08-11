@@ -1,6 +1,8 @@
 from sklearn.exceptions import ConvergenceWarning
+from sklearn.decomposition import PCA
 from matplotlib import pyplot as plt
 from sqlalchemy import create_engine
+from sklearn.cluster import KMeans
 from sklearn import preprocessing
 from pydub.playback import play
 from pydub import AudioSegment
@@ -20,7 +22,7 @@ import sys
 sys.path.append(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey')
 import ramsey_helpers as RH
 
-year_continuous = True
+year_continuous = False
 full = False
 optimize = True
 
@@ -47,6 +49,30 @@ SELECT id, [second]-1
 FROM RAMSEY.dbo.AudioTraining
 UNION
 SELECT id, [second]-2
+FROM RAMSEY.dbo.AudioTraining
+UNION
+SELECT id, [second]-3
+FROM RAMSEY.dbo.AudioTraining
+UNION
+SELECT id, [second]-4
+FROM RAMSEY.dbo.AudioTraining
+UNION
+SELECT id, [second]-5
+FROM RAMSEY.dbo.AudioTraining
+UNION
+SELECT id, [second]+1
+FROM RAMSEY.dbo.AudioTraining
+UNION
+SELECT id, [second]+2
+FROM RAMSEY.dbo.AudioTraining
+UNION
+SELECT id, [second]+3
+FROM RAMSEY.dbo.AudioTraining
+UNION
+SELECT id, [second]+4
+FROM RAMSEY.dbo.AudioTraining
+UNION
+SELECT id, [second]+5
 FROM RAMSEY.dbo.AudioTraining
 
 SELECT speaker , YEAR(publish_date) AS 'publish_year', 
@@ -103,7 +129,16 @@ if year_continuous:
     
     scaler = preprocessing.StandardScaler().fit(x)
     x = pd.DataFrame(scaler.transform(x), columns=save_cols)
+    
+    pca = PCA(4)
+    pca = np.argmax(pca.fit_transform(x), axis=1)
+    
+    km = KMeans(6)
+    km = np.argmax(km.fit_transform(x), axis=1)
+    
     x = train_audio[['id']].merge(x, left_index=True, right_index=True)
+    x['pca'] = pca
+    x['km'] = km
 
 else:
     years = pd.get_dummies(train_audio['publish_year'])
@@ -113,9 +148,17 @@ else:
     
     scaler = preprocessing.StandardScaler().fit(x)
     x = pd.DataFrame(scaler.transform(x), columns=save_cols)
+    
+    pca = PCA(4)
+    pca = np.argmax(pca.fit_transform(x), axis=1)
+    
+    km = KMeans(6)
+    km = np.argmax(km.fit_transform(x), axis=1)
+    
     x = train_audio[['id']].merge(x, left_index=True, right_index=True)
-
     x = x.merge(years, left_index=True, right_index=True)
+    x['pca'] = pca
+    x['km'] = km
 
 if full:
     if year_continuous:
@@ -130,7 +173,15 @@ if full:
         
         transform = pd.DataFrame(scaler.transform(transform), columns=save_cols)
         
+        pca = PCA(4)
+        pca = np.argmax(pca.fit_transform(x), axis=1)
+        
+        km = KMeans(6)
+        km = np.argmax(km.fit_transform(x), axis=1)
+        
         audio = audio[['id', 'second']].merge(transform, right_index=True, left_index=True)
+        audio['pca'] = pca
+        audio['km'] = km
             
     
     else:
@@ -139,10 +190,18 @@ if full:
         
         transform = pd.Dataframe(scaler.transform(transform), columns=save_cols)
         
+        pca = PCA(4)
+        pca = np.argmax(pca.fit_transform(x), axis=1)
+        
+        km = KMeans(6)
+        km = np.argmax(km.fit_transform(x), axis=1)
+        
         years = pd.get_dummies(audio['publish_year'])
         
         audio = audio[['id', 'second']].merge(transform, right_index=True, left_index=True)
         audio = audio.merge(years, right_index=True, left_index=True).dropna().reset_index(drop=True)
+        audio['pca'] = pca
+        audio['km'] = km
 
 ####################
 # Optimize Network #
@@ -153,28 +212,36 @@ space = [
     skopt.space.Categorical(['nn'], name='model'),
     skopt.space.Integer(0, max_shift, name='lags'),
     skopt.space.Integer(0, max_shift, name='leads'),
+    skopt.space.Integer(0, 1, name='pca'),
+    skopt.space.Integer(0, 1, name='km'),
     #skopt.space.Integer(50, 500, name='n_samples'),
     #skopt.space.Integer(50, 500, name='n_estimators'),
     #skopt.space.Real(0.0001, 0.1, name='lr_gbc', prior='log-uniform'),
-    skopt.space.Integer(1, 3, name='layers'),
+    skopt.space.Integer(1, 5, name='layers'),
     skopt.space.Integer(1, 100, name='epochs'),
     skopt.space.Real(0.0001, 0.2, name='drop', prior='log-uniform'),
     skopt.space.Real(0.00001, 0.04, name='lr_nn', prior='log-uniform')
     ]
 
-space = space + [skopt.space.Integer(2**2, 2**10, name=f'transform_{i}') for i in range(10)]
+space = space + [skopt.space.Integer(2**2, 2**10, name=f'transform_{i}') for i in range(5)]
 #space = space + [skopt.space.Integer(0, 1, name=f'column_{i}') for i in range((len(x.columns)-1)*(max_lags+1))]
 
 tracker, i = [], 0
 
 @skopt.utils.use_named_args(space)
-def net(model, lags, leads, n_samples=None, n_estimators=None, lr_gbc=None, max_depth=None, 
+def net(model, lags, leads, km, pca, n_samples=None, n_estimators=None, lr_gbc=None, max_depth=None, 
         drop=None, lr_nn=None, epochs=None, layers=None, **kwargs):
     lx = RH.shift(x, 'id', lags, leads, exclude=years.columns)
     lx = lx.loc[y != -1].drop('id', axis=1).dropna()
     ly = y.loc[lx.index]
     
     lx, ly = lx.reset_index(drop=True), ly.reset_index(drop=True)
+    
+    if pca == 0:
+        lx = lx.drop('pca', axis=1)
+        
+    if km == 0:
+        lx = lx.drop('km', axis=1)
     
     if 'column_0' in kwargs:
         select_cols = [kwargs[key] for key in kwargs if 'column' in key]
@@ -187,16 +254,16 @@ def net(model, lags, leads, n_samples=None, n_estimators=None, lr_gbc=None, max_
     transform = None if 'transform_0' not in kwargs else [kwargs[key] for key in kwargs if 'transform' in key]
     
     if model == 'logit':
-        f1 = RH.cv_logit(lx, ly, ls)
+        f1 = RH.cv_logit(lx, ly)
         
     elif model == 'rfc':
-        f1 = RH.cv_rfc(lx, ly, ls, n_samples)
+        f1 = RH.cv_rfc(lx, ly, n_samples)
         
     elif model == 'gbc':
-        f1 = RH.cv_gbc(lx, ly, ls, n_estimators, lr_gbc, max_depth)
+        f1 = RH.cv_gbc(lx, ly, n_estimators, lr_gbc, max_depth)
         
     elif model == 'nn':
-        f1 = RH.cv_nn(lx, ly, ls, transform, drop, lr_nn, epochs, layers=layers)
+        f1 = RH.cv_nn(lx, ly, transform, drop, lr_nn, epochs, layers=layers)
         #cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, output=10)
         
     else:
@@ -214,7 +281,7 @@ def net(model, lags, leads, n_samples=None, n_estimators=None, lr_gbc=None, max_
     return (- 1.0 * f1)
         
 if optimize:
-    result = skopt.forest_minimize(net, space, acq_func='PI', n_initial_points=10, n_calls=calls, n_jobs=-1)
+    result = skopt.forest_minimize(net, space, acq_func='PI', n_initial_points=25, n_calls=calls, n_jobs=-1)
     
     features = {'lags': 1, 'leads': 2, 'layers': 3, 'epochs': 4, 'drop': 5, 'lr': 6}
     
@@ -244,14 +311,14 @@ else:
 ####################
 x = RH.shift(x, 'id', results['lags'], results['leads'], exclude=years.columns)
 x = x.loc[y != -1].drop('id', axis=1).dropna()
-y, semi = y.loc[x.index], semi[x.index]
+y = y.loc[x.index]
 
 test_audio = train_audio.iloc[x.index]
 
-x, y, semi = x.reset_index(drop=True), y.reset_index(drop=True), semi.reset_index(drop=True)
+x, y = x.reset_index(drop=True), y.reset_index(drop=True)
 
 
-f1 = RH.cv_nn(x, y, semi, results['transform'], results['drop'], results['lr_nn'], 
+f1 = RH.cv_nn(x, y, results['transform'], results['drop'], results['lr_nn'], 
               results['epochs'], results['layers'], prin=True, wrong=True)
 
 f1['pred'] = f1.merge(mapped, how='left', left_on='pred', right_on='y')['speaker']
