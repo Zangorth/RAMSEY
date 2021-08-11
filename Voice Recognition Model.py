@@ -206,7 +206,7 @@ if full:
 ####################
 # Optimize Network #
 ####################
-calls, max_f1 = 100, []
+calls, max_f1 = 500, []
 max_shift = 5
 space = [
     skopt.space.Categorical(['nn'], name='model'),
@@ -283,7 +283,7 @@ def net(model, lags, leads, km, pca, n_samples=None, n_estimators=None, lr_gbc=N
 if optimize:
     result = skopt.forest_minimize(net, space, acq_func='PI', n_initial_points=25, n_calls=calls, n_jobs=-1)
     
-    features = {'lags': 1, 'leads': 2, 'layers': 3, 'epochs': 4, 'drop': 5, 'lr': 6}
+    features = {'lags': 1, 'leads': 2, 'pca': 3, 'km': 4, 'layers': 5, 'epochs': 6, 'drop': 7, 'lr': 8}
     
     for feature in features:
         print(features[feature])
@@ -298,8 +298,9 @@ if optimize:
     print(f'Parameters: {result.x}')
     
     results = {'model': result.x[0], 'lags': result.x[1], 'leads': result.x[2], 
-               'layers': result.x[3], 'epochs': result.x[4], 'drop': result.x[5],
-               'lr_nn': result.x[6], 'transform': [result.x[i] for i in range(7, len(result.x))]}
+               'pca': result.x[3], 'km': result.x[4], 
+               'layers': result.x[5], 'epochs': result.x[6], 'drop': result.x[7],
+               'lr_nn': result.x[8], 'transform': [result.x[i] for i in range(9, len(result.x))]}
     
     pickle.dump(results, open('results.pkl', 'wb'))
 else:
@@ -312,6 +313,12 @@ else:
 x = RH.shift(x, 'id', results['lags'], results['leads'], exclude=years.columns)
 x = x.loc[y != -1].drop('id', axis=1).dropna()
 y = y.loc[x.index]
+
+if results['pca'] == 0:
+    x = x.drop('pca', axis=1)
+    
+if results['km'] == 0:
+    x = x.drop('km', axis=1)
 
 test_audio = train_audio.iloc[x.index]
 
@@ -399,6 +406,12 @@ while i <= len(audio):
     audio_x = audio.iloc[i:i+100000]
     audio_x = RH.shift(audio_x, 'id', results['lags'], results['leads'], exclude=['second'] + list(years.columns))
     audio_x = audio_x.dropna()
+    
+    if results['pca'] == 0:
+        audio_x = audio_x.drop('pca', axis=1)
+        
+    if results['km'] == 0:
+        audio_x = audio_x.drop('km', axis=1)
     
     audio_x = torch.from_numpy(audio_x.drop(['id', 'second'], axis=1).values).float()
     
