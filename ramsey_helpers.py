@@ -2,6 +2,7 @@ from sklearn.model_selection import train_test_split as split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.exceptions import ConvergenceWarning
+from imblearn.over_sampling import SMOTE
 from sklearn.metrics import f1_score
 from collections import OrderedDict
 from xgboost import XGBClassifier
@@ -109,6 +110,9 @@ def cv_logit(x, y, cv=20, frac=0.1, avg=False, wrong=False):
     
     for i in range(cv):
         x_train, x_test, y_train, y_test = split(x, y, test_size=frac, stratify=y)
+        oversample = SMOTE()
+        x_train, y_train = oversample.fit_resample(x_train, y_train)
+        
         test_idx = x_test.index
         
         try:
@@ -142,7 +146,7 @@ def cv_logit(x, y, cv=20, frac=0.1, avg=False, wrong=False):
     else:
         return np.mean(f1)
 
-def cv_rfc(x, y, semi, n_estimators, cv=20, frac=0.1, avg=False, wrong=False):
+def cv_rfc(x, y, n_estimators, cv=20, frac=0.1, avg=False, wrong=False):
     avg_out = pd.DataFrame(columns=['speaker_id', 'f1'])
     wrong_out = pd.DataFrame(columns=['index', 'real', 'pred'])
     f1 = []
@@ -151,7 +155,7 @@ def cv_rfc(x, y, semi, n_estimators, cv=20, frac=0.1, avg=False, wrong=False):
         x_train, x_test, y_train, y_test = split(x, y, test_size=frac, stratify=y)
         test_idx = x_test.index
         
-        discriminator = RandomForestClassifier(n_estimators=n_estimators, n_jobs=8)
+        discriminator = RandomForestClassifier(n_estimators=n_estimators, n_jobs=-1)
         discriminator.fit(x_train, y_train)
         predictions = discriminator.predict(x_test)
         f1.append(f1_score(y_test, predictions, average='micro'))
@@ -189,7 +193,7 @@ def cv_gbc(x, y, n_estimators, lr_gbc, max_depth, cv=20, frac=0.1, avg=False, wr
         test_idx = x_test.index
     
         discriminator = XGBClassifier(n_estimators=n_estimators, learning_rate=lr_gbc, 
-                                      max_depth=max_depth, n_jobs=10, use_label_encoder=False,
+                                      max_depth=max_depth, n_jobs=-1, use_label_encoder=False,
                                       objective='multi:softmax', eval_metric='mlogloss',
                                       tree_method='gpu_hist')
         discriminator.fit(x_train, y_train)
@@ -226,6 +230,8 @@ def cv_nn(x, y, transforms, drop, lr_nn, epochs, layers=3, output=9, cv=20, frac
     
     for i in range(cv):
         x_train, x_test, y_train, y_test = split(x, y, test_size=frac, stratify=y)
+        oversample = SMOTE()
+        x_train, y_train = oversample.fit_resample(x_train, y_train)
         test = x_test.index
         
         col_count = x_train.shape[1]
