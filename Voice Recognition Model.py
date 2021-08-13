@@ -1,5 +1,6 @@
 from sklearn.linear_model import LogisticRegression
 from sklearn.exceptions import ConvergenceWarning
+from pure_sklearn.map import convert_estimator
 from sklearn.decomposition import PCA
 from matplotlib import pyplot as plt
 from sqlalchemy import create_engine
@@ -22,8 +23,8 @@ import sys
 sys.path.append(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey')
 import ramsey_helpers as RH
 
-full = False
-optimize = True
+full = True
+optimize = False
 
 warnings.filterwarnings('error', category=ConvergenceWarning)
 warnings.filterwarnings(action='ignore', category=UserWarning)
@@ -150,7 +151,7 @@ x['pca'] = pca
 x['km'] = km
 
 if full:
-    transform = audio.drop(['id', 'second', 'publish_year'], axis=1)
+    transform = audio.drop(['id', 'second', 'publish_year', 'dow', 'interaction'], axis=1)
     save_cols = transform.columns
     
     transform = pd.DataFrame(scaler.transform(transform), columns=save_cols)
@@ -360,28 +361,28 @@ if check:
 ###############
 # Predictions #
 ###############
-predictions = pd.DataFrame(columns=['speaker'])
+predictions = pd.DataFrame(columns=['id', 'second', 'prediction'])
 
 if results['model'] == 'logit':
-    audio_x = RH.shift(audio, 'id', results['lags'], results['leads'], exclude=['second'] + exclude)
-    audio_x = audio_x.dropna()
-    
-    if results['pca'] == 0:
-        audio_x = audio_x.drop('pca', axis=1)
-        
-    if results['km'] == 0:
-        audio_x = audio_x.drop('km', axis=1)
-    
     discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
     discriminator.fit(x, y)
     
+    discriminator = convert_estimator(discriminator)
+    
+    preds = []
     i = 0
-    while i <= len(audio_x):
+    while i <= len(audio):
         print(f'{i}:{i+100000} / {len(audio)}')
         
-        discriminator.predict(audio_x.drop(['id', 'second'], axis=1).iloc[0:100000])
-    
-        predictions = discriminator.predict(audio_x.drop(['id', 'second'], axis=1))
+        audio_x = audio.iloc[i:i+100000]
+        audio_x = RH.shift(audio_x, 'id', results['lags'], results['leads'], exclude=['second'] + exclude + ['2014-Saturday'])
+        audio_x = audio_x.dropna()
+        
+        audio_x['prediction'] = discriminator.predict(audio_x.drop([col for col in audio_x.columns if col not in x.columns], axis=1).values.tolist())
+        predictions = predictions.append(audio_x[['id', 'second', 'prediction']], ignore_index=True, sort=False)
+        
+        i += 100000
+        
 
 elif results['model'] == 'nn':
     torch.cuda.empty_cache()
@@ -408,27 +409,16 @@ elif results['model'] == 'nn':
         print(f'{i}:{i+100000} / {len(audio)}')
         
         audio_x = audio.iloc[i:i+100000]
-        audio_x = RH.shift(audio_x, 'id', results['lags'], results['leads'], exclude=['second'] + list(years.columns))
+        audio_x = RH.shift(audio_x, 'id', results['lags'], results['leads'], exclude=['second'] + exclude + ['2014-Saturday'])
         audio_x = audio_x.dropna()
         
-        if results['pca'] == 0:
-            audio_x = audio_x.drop('pca', axis=1)
-            
-        if results['km'] == 0:
-            audio_x = audio_x.drop('km', axis=1)
+        torch_x = torch.from_numpy(audio_x.drop([col for col in audio_x.columns if col not in x.columns], axis=1).values).float()
+        audio_x['prediction'] = np.argmax(discriminator(torch_x.to(device)).cpu().detach().numpy(), axis=1)
         
-        audio_x = torch.from_numpy(audio_x.drop(['id', 'second'], axis=1).values).float()
-        
-        append = pd.DataFrame({'speaker_id': np.argmax(discriminator(audio_x.to(device)).cpu().detach().numpy(), axis=1),
-                               'confidence': np.max(discriminator(audio_x.to(device)).cpu().detach().numpy(), axis=1)})
-        append = append.merge(mapped, how='left', left_on='speaker_id', right_on='y')[['speaker', 'confidence']]
-        
-        predictions = predictions.append(append, ignore_index=True, sort=False)
+        predictions = predictions.append(audio_x[['id', 'second', 'prediction']], ignore_index=True, sort=False)
         
         i+=100000
     
-predictions = audio[['id', 'second']].merge(predictions, right_index=True, left_index=True, how='right')
-
 conn_str = (
         r'Driver={SQL Server};'
         r'Server=ZANGORTH\HOMEBASE;'
