@@ -25,6 +25,7 @@ import ramsey_helpers as RH
 
 full = True
 optimize = False
+check = False
 
 warnings.filterwarnings('error', category=ConvergenceWarning)
 warnings.filterwarnings(action='ignore', category=UserWarning)
@@ -181,10 +182,10 @@ if full:
 ####################
 # Optimize Network #
 ####################
-calls, max_f1 = 25, []
+calls, max_f1 = 50, []
 max_shift = 5
 space = [
-    skopt.space.Categorical(['logit'], name='model'),
+    skopt.space.Categorical(['logit', 'nn'], name='model'),
     skopt.space.Integer(0, max_shift, name='lags'),
     skopt.space.Integer(0, max_shift, name='leads'),
     skopt.space.Integer(0, 1, name='pca'),
@@ -315,15 +316,14 @@ elif results['model'] == 'nn':
     avg = avg.merge(mapped, left_on='speaker_id', right_on='y')[['speaker', 'f1']]
     print(avg)
     
-    f1 = RH.cv_nn(x, y, results['transform'], results['drop'], results['lr_nn'], 
-                   results['epochs'], results['layers'], wrong=True)
+    if check:
+        f1 = RH.cv_nn(x, y, results['transform'], results['drop'], results['lr_nn'], 
+                       results['epochs'], results['layers'], wrong=True)
 
 
 ##################################
 # Double Check Wrong Predictions #
 ##################################
-check = False
-
 if check:
     test_audio = test_audio.iloc[f1['index']]
     test_audio = test_audio[['id', 'second', 'speaker']].reset_index(drop=True)
@@ -386,12 +386,13 @@ if results['model'] == 'logit':
 
 elif results['model'] == 'nn':
     torch.cuda.empty_cache()
+    save_cols = x.columns
     x, y = torch.from_numpy(x.values).to(device), torch.from_numpy(y.values).to(device)
     train_set = [(x[i], y[i]) for i in range(len(y))]
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=32, shuffle=True)
     
     loss_function = nn.CrossEntropyLoss()
-    discriminator = RH.Discriminator(x.shape[1], results['transform'], results['drop'], 10).to(device)
+    discriminator = RH.Discriminator(x.shape[1], results['transform'], results['drop'], 9).to(device)
     optim = torch.optim.Adam(discriminator.parameters(), lr=results['lr_nn'])
     
     for epoch in range(results['epochs']):
@@ -412,12 +413,16 @@ elif results['model'] == 'nn':
         audio_x = RH.shift(audio_x, 'id', results['lags'], results['leads'], exclude=['second'] + exclude + ['2014-Saturday'])
         audio_x = audio_x.dropna()
         
-        torch_x = torch.from_numpy(audio_x.drop([col for col in audio_x.columns if col not in x.columns], axis=1).values).float()
+        torch_x = torch.from_numpy(audio_x.drop([col for col in audio_x.columns if col not in save_cols], axis=1).values).float()
         audio_x['prediction'] = np.argmax(discriminator(torch_x.to(device)).cpu().detach().numpy(), axis=1)
         
         predictions = predictions.append(audio_x[['id', 'second', 'prediction']], ignore_index=True, sort=False)
         
         i+=100000
+    
+predictions = predictions.merge(mapped, how='left', left_on='prediction', right_on='y')[['id', 'second', 'speaker']]
+predictions['id'] = predictions['id'].astype(int)
+predictions['second'] = predictions['second'].astype(int)
     
 conn_str = (
         r'Driver={SQL Server};'
