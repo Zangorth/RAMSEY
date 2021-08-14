@@ -13,3 +13,15 @@ I also wanted to look at a Day of Week breakdown of this chart, as it wouldn't b
 
 ![plot1](https://github.com/Zangorth/RAMSEY/blob/main/Plots/Amount%20of%20Content%20Published.png)
 ![plot2](https://github.com/Zangorth/RAMSEY/blob/main/Plots/Amount%20of%20Content%20Published%20DOW.png)
+
+## Voice Recognition
+The second step in the project was to build a model that was able to accurately identify who was speaking during each second for each video. Potential speakers included Ramsey, the Guest Caller, and each of the personalities (Delony, AO, Hogan, Coleman, and Rachel Cruze. There was also an option for no speaker, as there are a substantial number of individual seconds in which no one in particular is speaking. Originally I also attempted to include a class for multiple individuals speaking at the same time, however, this tended to hurt the fit of the model more than it helped, so I ended up just identifying who the primary speaker in each clip was. 
+
+I trained the model on about an hour of content. In principle you don't need quite so many voice clips to identify a person's voice, however, the data was very imbalanced, with Ramsey speaking 60%-70% of the time on average and the guest speaking 30%-40% of the time on average. This often left <5% of the total speaking time to individual hosts across the sample, so getting a good number of clips from the other personalities was somewhat challenging. I was able to get around this to some extent by oversampling from 2020 and 2021 (when the personalities became more regular hosts), but even during these time periods the hosts tend to take up less than 15% of the speaking time. In order to further combat this, we used SMOTE (synthetic over-sampling) to further boost the performance of minority classes. 
+
+The final model chosen was a neural network with three layers. This model was arrived at using an optimization algorithm which selected the best model (choosing between logit, random forest, gradient boosting classifier, and neural network) with the best hyper-parameters, based on out of sample F1 score. The neural network out performed other models, and acheived a cross validated F1 of 0.9, which was the target F1 score. 
+
+Visualizations of the speaker data are presented below. Across the entire time frame most of the shows feature a call between Ramsey and the Guest, with no co-host personality. In 2020, however, Ramsey begins regularly bringing on co-hosts to help him take calls on the show. Of these co-hosts, Delony is the most popular, managing to take up between 10 and 15 percent of the talk time. By contrast, Rachel Cruze and Christy Wright tend to speak the least, with a combined talk time of less than 5 percent in most cases. 
+
+![plot3](https://github.com/Zangorth/RAMSEY/blob/main/Plots/Speaker%20Percent.png)
+
