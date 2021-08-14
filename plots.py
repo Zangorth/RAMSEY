@@ -59,20 +59,20 @@ dates['dow_minute_average'] = dates.groupby('dow')['minutes'].rolling(window=7).
 #    plt.show()
 #    plt.close()
 
+sea.set(rc={'figure.figsize':(17, 9)})
 sea.set_style('whitegrid')
-sea.set(rc={'figure.figsize':(16, 9)})
 sea.lineplot(x='publish_date', y='minute_average',
              data=dates, palette='icefire')
 plt.title('Amount of Content Published by "Ramsey Show Highlights" by Day\nSeven Day Rolling Average')
 plt.ylabel('Minutes Published')
 plt.xlabel('Date Published')
-plt.savefig(r'Plots\Amount of Content Published.png')
+plt.savefig(r'Plots\Amount of Content Published.png', bbox_inches='tight')
 plt.show()
 plt.close()
 
 
+sea.set(rc={'figure.figsize':(17, 9)})
 sea.set_style('whitegrid')
-sea.set(rc={'figure.figsize':(16, 9)})
 sea.lineplot(x='publish_date', y='dow_minute_average', hue='dow', 
              hue_order=['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'], 
              data=dates, palette='icefire')
@@ -80,7 +80,7 @@ plt.title('Amount of Content Published by "Ramsey Show Highlights" by Day\nSeven
 plt.legend(loc='upper center', ncol=7)
 plt.ylabel('Minutes Published')
 plt.xlabel('Date Published')
-plt.savefig(r'Plots\Amount of Content Published DOW.png')
+plt.savefig(r'Plots\Amount of Content Published DOW.png', bbox_inches='tight')
 plt.show()
 plt.close()
 
@@ -99,26 +99,27 @@ for date in list(set(speakers.publish_date)):
             
 
 speakers = speakers.sort_values(['speaker', 'publish_date']).reset_index(drop=True)
-speakers['speaker_sum_roll'] = speakers.groupby('speaker')['minutes'].rolling(window=7).sum().reset_index().sort_values('level_1')[['minutes']].reset_index(drop=True)
+speakers['speaker_sum_roll'] = speakers.groupby('speaker')['minutes'].rolling(window=30).sum().reset_index().sort_values('level_1')[['minutes']].reset_index(drop=True)
 
 daily_sum = speakers.groupby('publish_date')['minutes'].sum().reset_index().dropna().reset_index(drop=True)
 daily_sum['daily_sum_roll'] = daily_sum['minutes']
 
-for i in range(1, 7):
+for i in range(1, 30):
     daily_sum['daily_sum_roll'] += daily_sum['minutes'].shift(i)
 
 speakers = speakers.merge(daily_sum[['publish_date', 'daily_sum_roll']], on='publish_date', how='left')
 speakers['speaking_percent'] = speakers['speaker_sum_roll']/speakers['daily_sum_roll']
+speakers['speaking_percent'] = speakers['speaking_percent']*100
 
 
 sea.set(rc={'figure.figsize':(17, 9)})
 sea.set_style('whitegrid')
 sea.lineplot(x='publish_date', y='speaking_percent', hue='speaker',
              data=speakers, palette='Paired')
-plt.title('Percent of Video Time each Host Spends Talking\n F1 Score = 0.9')
+plt.title('Percent of Video Time each Host Spends Speaking Over Previous 30 Days\n F1 Score = 0.9')
 plt.ylabel('Percent')
 plt.xlabel('Date')
-plt.savefig(r'Plots\Speaker Percent.png')
+plt.savefig(r'Plots\Speaker Percent.png', bbox_inches='tight')
 plt.show()
 plt.close()
 
@@ -131,10 +132,9 @@ sea.set(rc={'figure.figsize':(17, 9)})
 sea.set_style('whitegrid')
 sea.lineplot(x='publish_date', y='speaking_percent', hue='speaker',
              data=speakers)
-plt.title('Percent of Video Time each Host Spends Talking\n F1 Score = 0.9')
+plt.title('Percent of Video Time each Non-Ramsey Personality Spends Speaking over Previous 30 Days\n F1 Score = 0.9')
 plt.ylabel('Percent')
-plt.xlabel('Date')
-plt.savefig(r'Plots\Speaker Percent (No Ramsey).png')
+plt.savefig(r'Plots\Speaker Percent (No Ramsey).png', bbox_inches='tight')
 plt.show()
 plt.close()
 
