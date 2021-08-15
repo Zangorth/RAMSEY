@@ -19,7 +19,9 @@ import pickle
 import skopt
 import torch
 import sys
+import os
 
+os.chdir(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey')
 sys.path.append(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey')
 import ramsey_helpers as RH
 
@@ -44,44 +46,44 @@ SET NOCOUNT ON
 
 SELECT id, [second], [source]
 INTO #speakers
-FROM RAMSEY.dbo.AudioTraining
+FROM RAMSEY.training.Speaker
 UNION
 SELECT id, [second]-1, [source]
-FROM RAMSEY.dbo.AudioTraining
+FROM RAMSEY.training.Speaker
 UNION
 SELECT id, [second]-2, [source]
-FROM RAMSEY.dbo.AudioTraining
+FROM RAMSEY.training.Speaker
 UNION
 SELECT id, [second]-3, [source]
-FROM RAMSEY.dbo.AudioTraining
+FROM RAMSEY.training.Speaker
 UNION
 SELECT id, [second]-4, [source]
-FROM RAMSEY.dbo.AudioTraining
+FROM RAMSEY.training.Speaker
 UNION
 SELECT id, [second]-5, [source]
-FROM RAMSEY.dbo.AudioTraining
+FROM RAMSEY.training.Speaker
 UNION
 SELECT id, [second]+1, [source]
-FROM RAMSEY.dbo.AudioTraining
+FROM RAMSEY.training.Speaker
 UNION
 SELECT id, [second]+2, [source]
-FROM RAMSEY.dbo.AudioTraining
+FROM RAMSEY.training.Speaker
 UNION
 SELECT id, [second]+3, [source]
-FROM RAMSEY.dbo.AudioTraining
+FROM RAMSEY.training.Speaker
 UNION
 SELECT id, [second]+4, [source]
-FROM RAMSEY.dbo.AudioTraining
+FROM RAMSEY.training.Speaker
 UNION
 SELECT id, [second]+5, [source]
-FROM RAMSEY.dbo.AudioTraining
+FROM RAMSEY.training.Speaker
 
 SELECT speaker , YEAR(publish_date) AS 'publish_year', 
     DATENAME(DW, publish_date) AS 'dow', 
     CONCAT(YEAR(publish_date),'-',  DATENAME(DW, publish_date)) AS 'interaction',
     #speakers.[source], code.*
 FROM #speakers
-LEFT JOIN RAMSEY.dbo.AudioTraining AS train
+LEFT JOIN RAMSEY.training.Speaker AS train
     ON #speakers.id = train.id
     AND #speakers.[second] = train.[second]
 LEFT JOIN RAMSEY.dbo.AudioCoding AS code
@@ -434,4 +436,4 @@ con = urllib.parse.quote_plus(conn_str)
 
 engine = create_engine(f'mssql+pyodbc:///?odbc_connect={con}')
 
-predictions.to_sql(name='predictions', con=engine, schema='dbo', if_exists='replace', index=False)
+predictions.to_sql(name='Speaker', con=engine, schema='prediction', if_exists='replace', index=False)

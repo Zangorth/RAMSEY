@@ -32,7 +32,7 @@ incomplete = list(set([int(file.replace('.mp3', '')) for file in incomplete]) - 
 incomplete = [f'{file}.mp3' for file in incomplete]
 
 for i in range(len(incomplete)):
-    print(f'Progress: {i}/{len(incomplete)}')
+    print(f'Progress: {i+1}/{len(incomplete)}')
     
     sound = AudioSegment.from_file(incomplete[i])
     iterables = [[int(incomplete[i].replace('.mp3', '')), cut, sound[cut*1000:cut*1000+1000]] for cut in range(int(round(len(sound)/1000, 0)))]
