@@ -12,7 +12,6 @@ Some results of the data scraping process can be visualized below. The first gra
 I also wanted to look at a Day of Week breakdown of this chart, as it wouldn't be uncommon for them to publish less on the weekends since they don't air any live shows on that day. This turned out as expected, with Saturday and Sunday seeing significantly less published content than the business days. 
 
 ![plot1](https://github.com/Zangorth/RAMSEY/blob/main/Plots/Amount%20of%20Content%20Published.png)
-![plot2](https://github.com/Zangorth/RAMSEY/blob/main/Plots/Amount%20of%20Content%20Published%20DOW.png)
 
 ## Voice Recognition
 The second step in the project was to build a model that was able to accurately identify who was speaking during each second for each video. Potential speakers included Ramsey, the Guest Caller, and each of the personalities (Delony, AO, Hogan, Coleman, and Rachel Cruze. There was also an option for no speaker, as there are a substantial number of individual seconds in which no one in particular is speaking. Originally I also attempted to include a class for multiple individuals speaking at the same time, however, this tended to hurt the fit of the model more than it helped, so I ended up just identifying who the primary speaker in each clip was. 
@@ -23,5 +22,5 @@ The final model chosen was a neural network with three layers. This model was ar
 
 Visualizations of the speaker data are presented below. Across the entire time frame most of the shows feature a call between Ramsey and the Guest, with no co-host personality. In 2020, however, Ramsey begins regularly bringing on co-hosts to help him take calls on the show. Of these co-hosts, Delony is the most popular, managing to take up between 10 and 15 percent of the talk time. By contrast, Rachel Cruze and Christy Wright tend to speak the least, with a combined talk time of less than 5 percent in most cases. 
 
-![plot3](https://github.com/Zangorth/RAMSEY/blob/main/Plots/Speaker%20Percent.png)
+![plot2](https://github.com/Zangorth/RAMSEY/blob/main/Plots/Speaker%20Percent.png)
 
