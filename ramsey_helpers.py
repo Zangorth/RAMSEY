@@ -6,6 +6,7 @@ from imblearn.over_sampling import SMOTE
 from sklearn.metrics import f1_score
 from collections import OrderedDict
 from xgboost import XGBClassifier
+from pydub.playback import play
 from torch import nn
 import pandas as pd
 import numpy as np
@@ -79,6 +80,39 @@ def extract_audio(sound):
     
     return features
 
+##################
+# Audio Training #
+##################
+
+def train_audio(sound, lead, second, link, prediction='', iterator='', size=''):
+    status = '' if iterator == '' and size == '' else f'{iterator}/{size}'
+    prediction = f' {prediction}' if prediction != '' else ''
+    
+    train = 0
+    while train == 0:
+        play(sound)
+        
+        train = input(f'{status} Label{prediction}: ')
+        train = train.upper()
+        train = 0 if train == '0' else train
+
+        if str(train).lower() == '':
+            train = prediction
+        
+        elif str(train).lower() == 'lead':
+            train = 0
+            play(lead)
+            
+        elif str(train).lower() == 'show':
+            train = 0
+            timestamp = f'{int(round(second/60, 0))}:{second % 60}'
+            print(f'{timestamp} - {link}')
+            
+        else:
+            pass
+    
+    return train
+        
 ##############
 # Lags/Leads #
 ##############

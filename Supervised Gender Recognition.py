@@ -8,8 +8,7 @@ import urllib
 #############
 # Read Data #
 #############
-test = False
-supervise = False
+supervise = True
 
 con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   Server=ZANGORTH\HOMEBASE; DATABASE=RAMSEY; 
@@ -18,11 +17,13 @@ con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   
 query = f'''
 SELECT {'base.id' if supervise else "CONVERT(INT, base.id) AS 'id'"},
-    [second], link{', speaker' if not supervise else ''}
-FROM {'RAMSEY.dbo.AudioCoding' if supervise else 'RAMSEY.prediction.Speaker'} AS base
+    base.[second], speaker, link{', gender' if not supervise else ''}
+FROM {'RAMSEY.dbo.AudioCoding' if supervise else 'RAMSEY.prediction.Gender'} AS base
 LEFT JOIN RAMSEY.dbo.metadata
     ON base.id = metadata.id
---WHERE YEAR(publish_date) = 2021
+LEFT JOIN RAMSEY.prediction.Speaker
+    ON base.id = Speaker.id
+    AND base.[second] = Speaker.[second]
 '''
                   
 panda = pd.read_sql(query, con)
@@ -30,7 +31,7 @@ panda = pd.read_sql(query, con)
 
 query = '''
 SELECT DISTINCT id, second, 1 AS 'found'
-FROM RAMSEY.training.Speaker
+FROM RAMSEY.training.Gender
 '''
 
 checked = pd.read_sql(query, con)
@@ -40,27 +41,27 @@ con.close()
 #######################
 # Supervised Learning #
 #######################
-sam_size = 300
+sam_size = 505
 
-if not test:
-    samples = panda.merge(checked, how='left', on=['id', 'second'])
-    samples = samples.loc[samples.found.isnull()].reset_index(drop=True)
+samples = panda.merge(checked, how='left', on=['id', 'second'])
+samples = samples.loc[samples.found.isnull()].reset_index(drop=True)
 samples = samples.sample(sam_size).reset_index(drop=True)
     
 
 for i in range(len(samples)):
     sample = samples['id'][i]
     second = samples['second'][i]
+    speaker = samples['speaker'][i]
     link = samples['link'][i]
-    prediction = '' if supervise else f'{samples["speaker"][i]}? '
+    prediction = '' if supervise else f'{samples["gender"][i]}? '
     
     sound = AudioSegment.from_file(f'C:\\Users\\Samuel\\Audio\\Audio Full\\{sample}.mp3')
     lead = sound[second*1000-3000: second*1000+3000]
     sound = sound[second*1000:second*1000+1000]
     
-    speaker = RH.train_audio(sound, lead, second, link, prediction, i, len(samples))
+    gender = RH.train_audio(sound, lead, second, link, speaker, i, len(samples))
     
-    upload = pd.DataFrame({'id': [sample], 'second': [second], 'speaker': [speaker], 'source': 'test'})
+    upload = pd.DataFrame({'id': [sample], 'second': [second], 'gender': [gender], 'source': 'random'})
                 
     conn_str = (
         r'Driver={SQL Server};'
@@ -70,4 +71,4 @@ for i in range(len(samples)):
     )
     con = urllib.parse.quote_plus(conn_str)
     engine = create_engine(f'mssql+pyodbc:///?odbc_connect={con}')
-    upload.to_sql(name='Speaker', con=engine, schema='training', if_exists='append', index=False)
+    upload.to_sql(name='Gender', con=engine, schema='training', if_exists='append', index=False)
