@@ -125,7 +125,6 @@ train_audio = train_audio.drop('source', axis=1)
 mapped = train_audio[['y', 'speaker']].drop_duplicates().reset_index(drop=True)
 mapped = mapped.loc[mapped.y != -1].sort_values('y').reset_index(drop=True)
 
-
 years = pd.get_dummies(train_audio['publish_year'])
 years.columns = [str(col) for col in years.columns]
 
@@ -184,7 +183,7 @@ if full:
 ####################
 # Optimize Network #
 ####################
-calls, max_f1 = 50, []
+calls, max_f1 = 200, []
 max_shift = 5
 space = [
     skopt.space.Categorical(['logit', 'nn'], name='model'),
@@ -321,44 +320,65 @@ elif results['model'] == 'nn':
     if check:
         f1 = RH.cv_nn(x, y, results['transform'], results['drop'], results['lr_nn'], 
                        results['epochs'], results['layers'], wrong=True)
-
+        
+        f1['pred'] = f1.merge(mapped, left_on='pred', right_on='y', how='left')['speaker']
+        f1['real'] = f1.merge(mapped, left_on='real', right_on='y', how='left')['speaker']
+        
 
 ##################################
 # Double Check Wrong Predictions #
 ##################################
 if check:
     test_audio = test_audio.iloc[f1['index']]
-    test_audio = test_audio[['id', 'second', 'speaker']].reset_index(drop=True)
-    test_audio = test_audio.merge(f1, left_index=True, right_index=True)
+    test_audio = test_audio[['id', 'second']].reset_index(drop=True)
+    test_audio = test_audio.merge(f1[['pred', 'real']], left_index=True, right_index=True)
+    test_audio = test_audio.sort_values(['id', 'second']).reset_index(drop=True)
     
     for i in range(len(test_audio)):
         sample = test_audio['id'][i]
-        cut = test_audio['second'][i]*1000
-        label = test_audio['speaker'][i]
+        second = test_audio['second'][i]
+        label = test_audio['real'][i]
         pred = test_audio['pred'][i]
         
         sound = AudioSegment.from_file(f'C:\\Users\\Samuel\\Audio\\Audio Full\\{sample}.mp3')
         
-        lead = sound[cut-10000:cut+1000]
-        sound = sound[cut:cut+1000]
+        lead = sound[second*1000-3000:second*1000+3000]
+        sound = sound[second*1000:second*1000+1000]
         
         speaker = 0
             
         while speaker == 0:
             play(sound)
     
-            speaker = input(f'Speaker {label} or {pred}? ')
+            speaker = input(f'({sample}: {second}) Speaker {label} or {pred}? ')
+            speaker = speaker.upper()
             speaker = 0 if speaker == '0' else speaker
     
-            if speaker == 'lead':
+            if str(speaker).lower() == 'lead':
                 play(lead)
                 speaker = 0
                 
-            elif speaker == '' or speaker == 0:
+            elif speaker == 0:
                 pass
+                
+            elif speaker == '':
+                speaker = label
             
             else:
-                print(f'UPDATE: {sample} {cut/1000}: {label} -> {speaker}')
+                con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
+                          Server=ZANGORTH\HOMEBASE; DATABASE=RAMSEY; 
+                          Trusted_Connection=yes;''')
+                         
+                csr = con.cursor()
+                query = f'''
+                UPDATE RAMSEY.training.Speaker
+                SET speaker = '{speaker}'
+                WHERE id = {sample} AND second = {second}
+                '''
+                
+                csr.execute(query)
+                csr.commit()
+                con.close()
 
 ###############
 # Predictions #
