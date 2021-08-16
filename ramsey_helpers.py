@@ -103,15 +103,17 @@ def shift(x, group, lags, leads, exclude = []):
 ##############################
 # Cross Validation Functions #
 ##############################
-def cv_logit(x, y, cv=20, frac=0.1, avg=False, wrong=False):
+def cv_logit(x, y, cv=20, frac=0.1, over=True, avg=False, wrong=False):
     avg_out = pd.DataFrame(columns=['speaker_id', 'f1'])
     wrong_out = pd.DataFrame(columns=['index', 'real', 'pred'])
     f1 = []
     
     for i in range(cv):
         x_train, x_test, y_train, y_test = split(x, y, test_size=frac, stratify=y)
-        oversample = SMOTE()
-        x_train, y_train = oversample.fit_resample(x_train, y_train)
+        
+        if over:
+            oversample = SMOTE()
+            x_train, y_train = oversample.fit_resample(x_train, y_train)
         
         test_idx = x_test.index
         
@@ -119,7 +121,7 @@ def cv_logit(x, y, cv=20, frac=0.1, avg=False, wrong=False):
             discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
             discriminator.fit(x_train, y_train)
             predictions = discriminator.predict(x_test)
-            f1.append(f1_score(y_test, predictions, average='micro'))
+            f1.append(f1_score(y_test, predictions, average='macro'))
         except ConvergenceWarning:
             f1.append(0)
             
@@ -158,7 +160,7 @@ def cv_rfc(x, y, n_estimators, cv=20, frac=0.1, avg=False, wrong=False):
         discriminator = RandomForestClassifier(n_estimators=n_estimators, n_jobs=-1)
         discriminator.fit(x_train, y_train)
         predictions = discriminator.predict(x_test)
-        f1.append(f1_score(y_test, predictions, average='micro'))
+        f1.append(f1_score(y_test, predictions, average='macro'))
         
         if avg:
             append = pd.DataFrame(f1_score(y_test, predictions, average=None)).reset_index()
@@ -175,6 +177,7 @@ def cv_rfc(x, y, n_estimators, cv=20, frac=0.1, avg=False, wrong=False):
         return np.mean(f1)
     
     elif avg:
+        print(f'Average F1: {np.mean(f1)}')
         return avg_out.groupby('speaker_id').mean()
     
     elif wrong:
@@ -198,7 +201,7 @@ def cv_gbc(x, y, n_estimators, lr_gbc, max_depth, cv=20, frac=0.1, avg=False, wr
                                       tree_method='gpu_hist')
         discriminator.fit(x_train, y_train)
         predictions = discriminator.predict(x_test)
-        f1.append(f1_score(y_test, predictions, average='micro'))
+        f1.append(f1_score(y_test, predictions, average='macro'))
         
         if avg:
             append = pd.DataFrame(f1_score(y_test, predictions, average=None)).reset_index()
@@ -223,15 +226,19 @@ def cv_gbc(x, y, n_estimators, lr_gbc, max_depth, cv=20, frac=0.1, avg=False, wr
     else:
         return np.mean(f1)
 
-def cv_nn(x, y, transforms, drop, lr_nn, epochs, layers=3, output=9, cv=20, frac=0.1, avg=False, wrong=False):
+def cv_nn(x, y, transforms, drop, lr_nn, epochs, layers=3, output=9, cv=10, frac=0.1, over=True, avg=False, wrong=False):
     avg_out = pd.DataFrame(columns=['speaker_id', 'f1'])
     wrong_out = pd.DataFrame(columns=['index', 'real', 'pred'])
     f1 = []
     
     for i in range(cv):
+        torch.cuda.empty_cache()
         x_train, x_test, y_train, y_test = split(x, y, test_size=frac, stratify=y)
-        oversample = SMOTE()
-        x_train, y_train = oversample.fit_resample(x_train, y_train)
+        
+        if over:
+            oversample = SMOTE(n_jobs=-1)
+            x_train, y_train = oversample.fit_resample(x_train, y_train)
+        
         test = x_test.index
         
         col_count = x_train.shape[1]
@@ -254,7 +261,7 @@ def cv_nn(x, y, transforms, drop, lr_nn, epochs, layers=3, output=9, cv=20, frac
                 optim.step()
                 
         test_hat = discriminator(x_test.float())
-        f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='micro'))
+        f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='macro'))
         
         if avg:
             append = pd.DataFrame(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average=None)).reset_index()
@@ -265,7 +272,6 @@ def cv_nn(x, y, transforms, drop, lr_nn, epochs, layers=3, output=9, cv=20, frac
         if wrong:
             append = pd.DataFrame({'index': test, 'real':y_test.cpu().numpy(), 'pred':np.argmax(test_hat.cpu().detach().numpy(), axis=1)})
             wrong_out = wrong_out.append(append, ignore_index=True, sort=False)
-            wrong_out = wrong_out.loc[wrong_out.real != wrong_out.pred]
     
     if avg and wrong:
         print('Choose either avg=True or wrong=True')
@@ -275,7 +281,9 @@ def cv_nn(x, y, transforms, drop, lr_nn, epochs, layers=3, output=9, cv=20, frac
         return avg_out.groupby('speaker_id').mean()
     
     elif wrong:
-        return wrong_out.drop_duplicates().reset_index(drop=True)
+        wrong_out = wrong_out.loc[wrong_out.real != wrong_out.pred]
+        wrong_out = wrong_out.drop_duplicates().reset_index(drop=True)
+        return wrong_out
             
     else:
         return np.mean(f1)
