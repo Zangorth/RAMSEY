@@ -3,6 +3,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.exceptions import ConvergenceWarning
 from imblearn.over_sampling import SMOTE
+from skorch import NeuralNetClassifier
 from sklearn.metrics import f1_score
 from collections import OrderedDict
 from xgboost import XGBClassifier
@@ -13,8 +14,6 @@ import numpy as np
 import warnings
 import librosa
 import torch
-
-device = torch.device('cuda:0')
 
 warnings.filterwarnings('error', category=ConvergenceWarning)
 
@@ -97,7 +96,7 @@ def train_audio(sound, lead, second, link, prediction='', iterator='', size=''):
         train = 0 if train == '0' else train
 
         if str(train).lower() == '':
-            train = prediction
+            train = prediction.strip()
         
         elif str(train).lower() == 'lead':
             train = 0
@@ -275,27 +274,16 @@ def cv_nn(x, y, transforms, drop, lr_nn, epochs, layers=3, output=9, cv=10, frac
         
         test = x_test.index
         
-        col_count = x_train.shape[1]
-        x_train, x_test = torch.from_numpy(x_train.values).to(device), torch.from_numpy(x_test.values).to(device)
-        y_train, y_test = torch.from_numpy(y_train.values).to(device), torch.from_numpy(y_test.values).to(device)
+        discriminator = Discriminator(x_train.shape[1], transforms, drop, output, layers)
         
-        train_set = [(x_train[i].to(device), y_train[i].to(device)) for i in range(len(y_train))]
-        train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**10, shuffle=True)
-    
-        loss_function = nn.CrossEntropyLoss()
-        discriminator = Discriminator(col_count, transforms, drop, output, layers).to(device)
-        optim = torch.optim.Adam(discriminator.parameters(), lr=lr_nn)
-    
-        for epoch in range(epochs):
-            for i, (inputs, targets) in enumerate(train_loader):
-                discriminator.zero_grad()
-                yhat = discriminator(inputs.float())
-                loss = loss_function(yhat, targets.long())
-                loss.backward()
-                optim.step()
-                
-        test_hat = discriminator(x_test.float())
-        f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='macro'))
+        neural_net = NeuralNetClassifier(discriminator, max_epochs=epochs, lr=lr_nn, 
+                                         optimizer=torch.optim.Adam, batch_size=2**9, criterion=nn.CrossEntropyLoss,
+                                         device='cuda:0', verbose=0, train_split=None)
+        
+        neural_net.fit(x_train.values.astype(np.float32), y_train.astype(np.int64))
+        
+        test_hat = neural_net.predict(x_test.values.astype(np.float32))
+        f1.append(f1_score(y_test, test_hat, average='macro'))
         
         if avg:
             append = pd.DataFrame(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average=None)).reset_index()
