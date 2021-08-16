@@ -25,8 +25,8 @@ os.chdir(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey')
 sys.path.append(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey')
 import ramsey_helpers as RH
 
-full = True
-optimize = False
+full = False
+optimize = True
 check = False
 
 warnings.filterwarnings('error', category=ConvergenceWarning)
@@ -183,10 +183,10 @@ if full:
 ####################
 # Optimize Network #
 ####################
-calls, max_f1 = 200, []
+calls, max_f1 = 25, []
 max_shift = 5
 space = [
-    skopt.space.Categorical(['logit', 'nn'], name='model'),
+    skopt.space.Categorical(['nn'], name='model'),
     skopt.space.Integer(0, max_shift, name='lags'),
     skopt.space.Integer(0, max_shift, name='leads'),
     skopt.space.Integer(0, 1, name='pca'),
@@ -224,39 +224,17 @@ def net(model, lags, leads, km, pca, n_samples=None, n_estimators=None, lr_gbc=N
     if km == 0:
         lx = lx.drop('km', axis=1)
     
-    if 'column_0' in kwargs:
-        select_cols = [kwargs[key] for key in kwargs if 'column' in key]
-        select_cols = [lx.columns[i] for i in range(len(lx.columns)) if select_cols[i] == 1]
-        lx = lx[select_cols]
-        
-    else:
-        select_cols = None
-    
     transform = None if 'transform_0' not in kwargs else [kwargs[key] for key in kwargs if 'transform' in key]
     
-    if model == 'logit':
-        f1 = RH.cv_logit(lx, ly)
-        
-    elif model == 'rfc':
-        f1 = RH.cv_rfc(lx, ly, n_samples)
-        
-    elif model == 'gbc':
-        f1 = RH.cv_gbc(lx, ly, n_estimators, lr_gbc, max_depth)
-        
-    elif model == 'nn':
-        f1 = RH.cv_nn(lx, ly, transform, drop, lr_nn, epochs, layers=layers)
-        #cv_nn(x, y, semi, transforms, drop, lr_nn, epochs, output=10)
-        
-    else:
-        print('Improperly Specified Model')
-        f1 = 0
+    f1 = RH.cv(model, lx, ly, n_samples, n_estimators, lr_gbc, max_depth,
+               transforms, drop, layers, epochs, lr_nn)
     
     global i
     i += 1
     
     global tracker
     tracker.append([model, lags, n_samples, n_estimators, lr_gbc, max_depth,
-                    drop, lr_nn, epochs, layers, transform, select_cols])
+                    drop, lr_nn, epochs, layers, transform])
     
     print(f'({i}/{calls}) {model}: {round(f1, 2)}')
     return (- 1.0 * f1)

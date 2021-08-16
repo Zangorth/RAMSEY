@@ -2,8 +2,8 @@ from sklearn.model_selection import train_test_split as split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.exceptions import ConvergenceWarning
+from skorch import NeuralNetClassifier as nnc
 from imblearn.over_sampling import SMOTE
-from skorch import NeuralNetClassifier
 from sklearn.metrics import f1_score
 from collections import OrderedDict
 from xgboost import XGBClassifier
@@ -136,7 +136,10 @@ def shift(x, group, lags, leads, exclude = []):
 ##############################
 # Cross Validation Functions #
 ##############################
-def cv_logit(x, y, cv=20, frac=0.1, over=True, avg=False, wrong=False):
+def cv(model, x, y, 
+       n_samples, n_estimators, lr_gbc, max_depth,
+       transforms, drop, layers, epochs, lr_nn, output=9, 
+       cv=20, frac=0.1, over=True, avg=False, wrong=False):
     avg_out = pd.DataFrame(columns=['speaker_id', 'f1'])
     wrong_out = pd.DataFrame(columns=['index', 'real', 'pred'])
     f1 = []
@@ -150,8 +153,27 @@ def cv_logit(x, y, cv=20, frac=0.1, over=True, avg=False, wrong=False):
         
         test_idx = x_test.index
         
-        try:
+        if model == 'logit':
             discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
+        
+        elif model == 'rfc':
+            discriminator = RandomForestClassifier(n_estimators=n_samples, n_jobs=-1)
+            
+        elif model == 'gbc':
+            discriminator = XGBClassifier(n_estimators=n_estimators, learning_rate=lr_gbc, 
+                                          max_depth=max_depth, n_jobs=-1, use_label_encoder=False,
+                                          objective='multi:softmax', eval_metric='mlogloss',
+                                          tree_method='gpu_hist')
+        
+        elif model == 'nn':
+            x_train, y_train = x_train.values.astype(np.float32), y_train.astype(np.int64)
+            x_test, y_test = x_test.values.astype(np.float32), y_test.astype(np.int64)
+            classifier = Discriminator(x_train.shape[1], transforms, drop, output, layers)
+            discriminator = nnc(classifier, max_epochs=epochs, lr=lr_nn,
+                                optimizer=torch.optim.Adam, batch_size=2**9, criterion=nn.CrossEntropyLoss,
+                                device='cuda:0', verbose=0, train_split=None)
+            
+        try:
             discriminator.fit(x_train, y_train)
             predictions = discriminator.predict(x_test)
             f1.append(f1_score(y_test, predictions, average='macro'))
@@ -169,143 +191,14 @@ def cv_logit(x, y, cv=20, frac=0.1, over=True, avg=False, wrong=False):
             wrong_out = wrong_out.loc[wrong_out.real != wrong_out.pred]
             
     if avg and wrong:
-        print('Choose either avg=True or wrong=True')
-        return np.mean(f1)
+        message = 'Choose either avg=True or wrong=True'
+        return message
     
     elif avg:
         return avg_out.groupby('speaker_id').mean()
     
     elif wrong:
         return wrong_out.drop_duplicates().reset_index(drop=True)
-            
-    else:
-        return np.mean(f1)
-
-def cv_rfc(x, y, n_estimators, cv=20, frac=0.1, avg=False, wrong=False):
-    avg_out = pd.DataFrame(columns=['speaker_id', 'f1'])
-    wrong_out = pd.DataFrame(columns=['index', 'real', 'pred'])
-    f1 = []
-    
-    for i in range(cv):
-        x_train, x_test, y_train, y_test = split(x, y, test_size=frac, stratify=y)
-        test_idx = x_test.index
-        
-        discriminator = RandomForestClassifier(n_estimators=n_estimators, n_jobs=-1)
-        discriminator.fit(x_train, y_train)
-        predictions = discriminator.predict(x_test)
-        f1.append(f1_score(y_test, predictions, average='macro'))
-        
-        if avg:
-            append = pd.DataFrame(f1_score(y_test, predictions, average=None)).reset_index()
-            append.columns = avg_out.columns
-            avg_out = avg_out.append(append, ignore_index=True, sort=False)
-            
-        if wrong:
-            append = pd.DataFrame({'index': test_idx, 'real': y_test, 'pred': predictions})
-            wrong_out.append(append, ignore_index=True, sort=False)
-            wrong_out = wrong_out.loc[wrong_out.real != wrong_out.pred]
-            
-    if avg and wrong:
-        print('Choose either avg=True or wrong=True')
-        return np.mean(f1)
-    
-    elif avg:
-        print(f'Average F1: {np.mean(f1)}')
-        return avg_out.groupby('speaker_id').mean()
-    
-    elif wrong:
-        return wrong_out.drop_duplicates().reset_index(drop=True)
-            
-    else:
-        return np.mean(f1)
-        
-def cv_gbc(x, y, n_estimators, lr_gbc, max_depth, cv=20, frac=0.1, avg=False, wrong=False):
-    avg_out = pd.DataFrame(columns=['speaker_id', 'f1'])
-    wrong_out = pd.DataFrame(columns=['index', 'real', 'pred'])
-    f1 = []
-    
-    for i in range(cv):
-        x_train, x_test, y_train, y_test = split(x, y, test_size=frac, stratify=y)
-        test_idx = x_test.index
-    
-        discriminator = XGBClassifier(n_estimators=n_estimators, learning_rate=lr_gbc, 
-                                      max_depth=max_depth, n_jobs=-1, use_label_encoder=False,
-                                      objective='multi:softmax', eval_metric='mlogloss',
-                                      tree_method='gpu_hist')
-        discriminator.fit(x_train, y_train)
-        predictions = discriminator.predict(x_test)
-        f1.append(f1_score(y_test, predictions, average='macro'))
-        
-        if avg:
-            append = pd.DataFrame(f1_score(y_test, predictions, average=None)).reset_index()
-            append.columns = avg_out.columns
-            avg_out = avg_out.append(append, ignore_index=True, sort=False)
-            
-        if wrong:
-            append = pd.DataFrame({'index': test_idx, 'real': y_test, 'pred': predictions})
-            wrong_out.append(append, ignore_index=True, sort=False)
-            wrong_out = wrong_out.loc[wrong_out.real != wrong_out.pred]
-            
-    if avg and wrong:
-        print('Choose either avg=True or wrong=True')
-        return np.mean(f1)
-    
-    elif avg:
-        return avg_out.groupby('speaker_id').mean()
-    
-    elif wrong:
-        return wrong_out.drop_duplicates().reset_index(drop=True)
-            
-    else:
-        return np.mean(f1)
-
-def cv_nn(x, y, transforms, drop, lr_nn, epochs, layers=3, output=9, cv=10, frac=0.1, over=True, avg=False, wrong=False):
-    avg_out = pd.DataFrame(columns=['speaker_id', 'f1'])
-    wrong_out = pd.DataFrame(columns=['index', 'real', 'pred'])
-    f1 = []
-    
-    for i in range(cv):
-        torch.cuda.empty_cache()
-        x_train, x_test, y_train, y_test = split(x, y, test_size=frac, stratify=y)
-        
-        if over:
-            oversample = SMOTE(n_jobs=-1)
-            x_train, y_train = oversample.fit_resample(x_train, y_train)
-        
-        test = x_test.index
-        
-        discriminator = Discriminator(x_train.shape[1], transforms, drop, output, layers)
-        
-        neural_net = NeuralNetClassifier(discriminator, max_epochs=epochs, lr=lr_nn, 
-                                         optimizer=torch.optim.Adam, batch_size=2**9, criterion=nn.CrossEntropyLoss,
-                                         device='cuda:0', verbose=0, train_split=None)
-        
-        neural_net.fit(x_train.values.astype(np.float32), y_train.astype(np.int64))
-        
-        test_hat = neural_net.predict(x_test.values.astype(np.float32))
-        f1.append(f1_score(y_test, test_hat, average='macro'))
-        
-        if avg:
-            append = pd.DataFrame(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average=None)).reset_index()
-            append.columns = avg_out.columns
-            avg_out = avg_out.append(append, ignore_index=True, sort=False)
-            
-            
-        if wrong:
-            append = pd.DataFrame({'index': test, 'real':y_test.cpu().numpy(), 'pred':np.argmax(test_hat.cpu().detach().numpy(), axis=1)})
-            wrong_out = wrong_out.append(append, ignore_index=True, sort=False)
-    
-    if avg and wrong:
-        print('Choose either avg=True or wrong=True')
-        return np.mean(f1)
-    
-    elif avg:
-        return avg_out.groupby('speaker_id').mean()
-    
-    elif wrong:
-        wrong_out = wrong_out.loc[wrong_out.real != wrong_out.pred]
-        wrong_out = wrong_out.drop_duplicates().reset_index(drop=True)
-        return wrong_out
             
     else:
         return np.mean(f1)
