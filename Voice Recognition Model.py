@@ -183,7 +183,7 @@ if full:
 ####################
 # Optimize Network #
 ####################
-calls, max_f1 = 25, []
+calls, max_f1 = 100, []
 max_shift = 5
 space = [
     skopt.space.Categorical(['nn'], name='model'),
@@ -194,7 +194,7 @@ space = [
     skopt.space.Integer(50, 500, name='n_samples'),
     skopt.space.Integer(50, 500, name='n_estimators'),
     skopt.space.Real(0.0001, 0.1, name='lr_gbc', prior='log-uniform'),
-    skopt.space.Integer(1, 5, name='layers'),
+    skopt.space.Integer(4, 5, name='layers'),
     skopt.space.Integer(1, 100, name='epochs'),
     skopt.space.Real(0.0001, 0.2, name='drop', prior='log-uniform'),
     skopt.space.Real(0.00001, 0.04, name='lr_nn', prior='log-uniform')
@@ -203,14 +203,11 @@ space = [
 space = space + [skopt.space.Integer(2**2, 2**10, name=f'transform_{i}') for i in range(5)]
 #space = space + [skopt.space.Integer(0, 1, name=f'column_{i}') for i in range((len(x.columns)-1)*(max_lags+1))]
 
-tracker, i = [], 0
-
-lags, leads, km, pca = 3, 3, 1, 0
-drop, lr_nn, epochs, layers = 0.001, 0.001, 20, 4
-transforms = [132, 64, 32, 16]
+i = 0
 
 @skopt.utils.use_named_args(space)
-def net(model, lags, leads, km, pca, n_samples=None, n_estimators=None, lr_gbc=None, max_depth=None, 
+def net(model, lags, leads, km, pca, neighbors=None, weights=None, n_samples=None, 
+        n_estimators=None, lr_gbc=None, max_depth=None, 
         drop=None, lr_nn=None, epochs=None, layers=None, **kwargs):
     lx = RH.shift(x, 'id', lags, leads, exclude=exclude)
     lx = lx.loc[y != -1].drop('id', axis=1).dropna()
@@ -224,19 +221,16 @@ def net(model, lags, leads, km, pca, n_samples=None, n_estimators=None, lr_gbc=N
     if km == 0:
         lx = lx.drop('km', axis=1)
     
-    transform = None if 'transform_0' not in kwargs else [kwargs[key] for key in kwargs if 'transform' in key]
-    
-    f1 = RH.cv(model, lx, ly, n_samples, n_estimators, lr_gbc, max_depth,
-               transforms, drop, layers, epochs, lr_nn)
+    transforms = None if 'transform_0' not in kwargs else [kwargs[key] for key in kwargs if 'transform' in key]
+
+    f1 = RH.cv(model, lx, ly, 
+               n_samples=n_samples, n_estimators=n_estimators, lr_gbc=lr_gbc, max_depth=max_depth,
+               output=len(set(ly)), layers=layers, epochs=epochs, drop=drop, lr_nn=lr_nn, transforms=transforms)
     
     global i
     i += 1
     
-    global tracker
-    tracker.append([model, lags, n_samples, n_estimators, lr_gbc, max_depth,
-                    drop, lr_nn, epochs, layers, transform])
-    
-    print(f'({i}/{calls}) {model}: {round(f1, 2)}')
+    print(f'({i}/{calls}) {model}: {round(f1, 3)}')
     return (- 1.0 * f1)
         
 if optimize:
@@ -285,22 +279,19 @@ test_audio = train_audio.iloc[x.index]
 
 x, y = x.reset_index(drop=True), y.reset_index(drop=True)
 
-if results['model'] == 'logit':
-    avg = RH.cv_logit(x, y, avg=True)
-    print(avg)
+avg = RH.cv(results['model'], x, y, 
+            n_samples=results['n_samples'], n_estimators=results['n_estimators'], lr_gbc=results['lr_gbc'], 
+            max_depth=results['max_depth'], output=len(set(y)), layers=results['layers'], epochs=results['epochs'], 
+            drop=results['drop'], lr_nn=results['lr_nn'], transforms=results['transforms'], avg=True)
     
-elif results['model'] == 'nn':
-    avg = RH.cv_nn(x, y, results['transform'], results['drop'], results['lr_nn'], 
-                   results['epochs'], results['layers'], avg=True)
-    avg = avg.merge(mapped, left_on='speaker_id', right_on='y')[['speaker', 'f1']]
-    print(avg)
+if check:
+    f1 = RH.cv(results['model'], x, y, 
+                n_samples=results['n_samples'], n_estimators=results['n_estimators'], lr_gbc=results['lr_gbc'], 
+                max_depth=results['max_depth'], output=len(set(y)), layers=results['layers'], epochs=results['epochs'], 
+                drop=results['drop'], lr_nn=results['lr_nn'], transforms=results['transforms'], wrong=True)
     
-    if check:
-        f1 = RH.cv_nn(x, y, results['transform'], results['drop'], results['lr_nn'], 
-                       results['epochs'], results['layers'], wrong=True)
-        
-        f1['pred'] = f1.merge(mapped, left_on='pred', right_on='y', how='left')['speaker']
-        f1['real'] = f1.merge(mapped, left_on='real', right_on='y', how='left')['speaker']
+    f1['pred'] = f1.merge(mapped, left_on='pred', right_on='y', how='left')['speaker']
+    f1['real'] = f1.merge(mapped, left_on='real', right_on='y', how='left')['speaker']
         
 
 ##################################
