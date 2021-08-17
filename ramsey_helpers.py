@@ -2,7 +2,6 @@ from sklearn.model_selection import train_test_split as split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.exceptions import ConvergenceWarning
-from skorch import NeuralNetClassifier as nnc
 from imblearn.over_sampling import SMOTE
 from sklearn.metrics import f1_score
 from collections import OrderedDict
@@ -15,6 +14,7 @@ import warnings
 import librosa
 import torch
 
+device = torch.device('cuda:0')
 warnings.filterwarnings('error', category=ConvergenceWarning)
 
 class ParameterError(Exception):
@@ -23,28 +23,70 @@ class ParameterError(Exception):
 ###########################
 # Neural Network Function #
 ###########################
-class Discriminator(nn.Module):
-    def __init__(self, shape, transforms, drop, output, layers=3):
-        super().__init__()
+class Discriminator():
+    def __init__(self, shape, drop, transforms, lr_nn, epochs, output, layers=3):
+        self.shape, self.drop = shape, drop
+        self.output, self.layers = output, layers
+        self.transforms = transforms
+        self.lr_nn, self.epochs = lr_nn, epochs
         
-        transforms = [shape] + transforms
-        sequential = OrderedDict()
+        return None
         
-        i = 0
-        while i < layers:
-            sequential[f'linear_{i}'] = nn.Linear(transforms[i], transforms[i+1])
-            sequential[f'relu_{i}'] = nn.ReLU()
-            sequential[f'drop_{i}'] = nn.Dropout(drop)
-            i+=1
+    class Classifier(nn.Module):
+        def __init__(self, shape, transforms, drop, output, layers=3):
+            super().__init__()
             
-        sequential['linear_final'] = nn.Linear(transforms[i], output)
-        sequential['softmax'] = nn.Softmax(dim=1)
+            transforms = [shape] + transforms
+            sequential = OrderedDict()
+            
+            i = 0
+            while i < layers:
+                sequential[f'linear_{i}'] = nn.Linear(transforms[i], transforms[i+1])
+                sequential[f'relu_{i}'] = nn.ReLU()
+                sequential[f'drop_{i}'] = nn.Dropout(drop)
+                i+=1
+                
+            sequential['linear_final'] = nn.Linear(transforms[i], output)
+            sequential['softmax'] = nn.Softmax(dim=1)
+            
+            self.model = nn.Sequential(sequential)
+            
+        def forward(self, x):
+            output = self.model(x)
+            return output
+    
+    def fit(self, x, y):
+        col_count = x.shape[1]
+        x, y = torch.from_numpy(x.values).to(device), torch.from_numpy(y.values).to(device)
         
-        self.model = nn.Sequential(sequential)
+        train_set = [(x[i].to(device), y[i].to(device)) for i in range(len(y))]
+        train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**10, shuffle=True)
+    
+        loss_function = nn.CrossEntropyLoss()
+        discriminator = self.Classifier(col_count, self.transforms, self.drop, self.output, self.layers).to(device)
+        optim = torch.optim.Adam(discriminator.parameters(), lr=self.lr_nn)
+    
+        for epoch in range(self.epochs):
+            for i, (inputs, targets) in enumerate(train_loader):
+                discriminator.zero_grad()
+                yhat = discriminator(inputs.float())
+                loss = loss_function(yhat, targets.long())
+                loss.backward()
+                optim.step()
+                
+        self.model = discriminator
         
-    def forward(self, x):
-        output = self.model(x)
-        return output
+        return None
+    
+    def predict(self, x):
+        discriminator = self.model
+        discriminator.to(device).eval()
+        
+        x = torch.from_numpy(x.values).to(device)
+        preds = np.argmax(discriminator(x.float()).cpu().detach(), axis=1)
+        
+        return preds
+        
         
 #####################
 # Audio Exctraction #
@@ -76,42 +118,41 @@ def extract_audio(sound):
     
     except Exception:
         features = []
-    
+
     return features
 
 ##################
 # Audio Training #
 ##################
-
 def train_audio(sound, lead, second, link, prediction='', iterator='', size=''):
     status = '' if iterator == '' and size == '' else f'{iterator}/{size}'
     prediction = f' {prediction}' if prediction != '' else ''
-    
+
     train = 0
     while train == 0:
         play(sound)
-        
+
         train = input(f'{status} Label{prediction}: ')
         train = train.upper()
         train = 0 if train == '0' else train
 
         if str(train).lower() == '':
-            train = prediction.strip()
-        
+            train = prediction
+
         elif str(train).lower() == 'lead':
             train = 0
             play(lead)
-            
+
         elif str(train).lower() == 'show':
             train = 0
             timestamp = f'{int(round(second/60, 0))}:{second % 60}'
             print(f'{timestamp} - {link}')
-            
+
         else:
             pass
-    
+
     return train
-        
+
 ##############
 # Lags/Leads #
 ##############
@@ -136,10 +177,7 @@ def shift(x, group, lags, leads, exclude = []):
 ##############################
 # Cross Validation Functions #
 ##############################
-def cv(model, x, y, 
-       n_samples, n_estimators, lr_gbc, max_depth,
-       transforms, drop, layers, epochs, lr_nn, output=9, 
-       cv=20, frac=0.1, over=True, avg=False, wrong=False):
+def cv_logit(x, y, cv=20, frac=0.1, over=True, avg=False, wrong=False):
     avg_out = pd.DataFrame(columns=['speaker_id', 'f1'])
     wrong_out = pd.DataFrame(columns=['index', 'real', 'pred'])
     f1 = []
@@ -153,27 +191,8 @@ def cv(model, x, y,
         
         test_idx = x_test.index
         
-        if model == 'logit':
-            discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
-        
-        elif model == 'rfc':
-            discriminator = RandomForestClassifier(n_estimators=n_samples, n_jobs=-1)
-            
-        elif model == 'gbc':
-            discriminator = XGBClassifier(n_estimators=n_estimators, learning_rate=lr_gbc, 
-                                          max_depth=max_depth, n_jobs=-1, use_label_encoder=False,
-                                          objective='multi:softmax', eval_metric='mlogloss',
-                                          tree_method='gpu_hist')
-        
-        elif model == 'nn':
-            x_train, y_train = x_train.values.astype(np.float32), y_train.astype(np.int64)
-            x_test, y_test = x_test.values.astype(np.float32), y_test.astype(np.int64)
-            classifier = Discriminator(x_train.shape[1], transforms, drop, output, layers)
-            discriminator = nnc(classifier, max_epochs=epochs, lr=lr_nn,
-                                optimizer=torch.optim.Adam, batch_size=2**9, criterion=nn.CrossEntropyLoss,
-                                device='cuda:0', verbose=0, train_split=None)
-            
         try:
+            discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
             discriminator.fit(x_train, y_train)
             predictions = discriminator.predict(x_test)
             f1.append(f1_score(y_test, predictions, average='macro'))
@@ -191,8 +210,8 @@ def cv(model, x, y,
             wrong_out = wrong_out.loc[wrong_out.real != wrong_out.pred]
             
     if avg and wrong:
-        message = 'Choose either avg=True or wrong=True'
-        return message
+        print('Choose either avg=True or wrong=True')
+        return np.mean(f1)
     
     elif avg:
         return avg_out.groupby('speaker_id').mean()
@@ -202,4 +221,143 @@ def cv(model, x, y,
             
     else:
         return np.mean(f1)
-
+    
+def cv_rfc(x, y, n_estimators, cv=20, frac=0.1, avg=False, wrong=False):
+    avg_out = pd.DataFrame(columns=['speaker_id', 'f1'])
+    wrong_out = pd.DataFrame(columns=['index', 'real', 'pred'])
+    f1 = []
+    
+    for i in range(cv):
+        x_train, x_test, y_train, y_test = split(x, y, test_size=frac, stratify=y)
+        test_idx = x_test.index
+        
+        discriminator = RandomForestClassifier(n_estimators=n_estimators, n_jobs=-1)
+        discriminator.fit(x_train, y_train)
+        predictions = discriminator.predict(x_test)
+        f1.append(f1_score(y_test, predictions, average='macro'))
+        
+        if avg:
+            append = pd.DataFrame(f1_score(y_test, predictions, average=None)).reset_index()
+            append.columns = avg_out.columns
+            avg_out = avg_out.append(append, ignore_index=True, sort=False)
+            
+        if wrong:
+            append = pd.DataFrame({'index': test_idx, 'real': y_test, 'pred': predictions})
+            wrong_out.append(append, ignore_index=True, sort=False)
+            wrong_out = wrong_out.loc[wrong_out.real != wrong_out.pred]
+            
+    if avg and wrong:
+        print('Choose either avg=True or wrong=True')
+        return np.mean(f1)
+    
+    elif avg:
+        print(f'Average F1: {np.mean(f1)}')
+        return avg_out.groupby('speaker_id').mean()
+    
+    elif wrong:
+        return wrong_out.drop_duplicates().reset_index(drop=True)
+            
+    else:
+        return np.mean(f1)
+        
+def cv_gbc(x, y, n_estimators, lr_gbc, max_depth, cv=20, frac=0.1, avg=False, wrong=False):
+    avg_out = pd.DataFrame(columns=['speaker_id', 'f1'])
+    wrong_out = pd.DataFrame(columns=['index', 'real', 'pred'])
+    f1 = []
+    
+    for i in range(cv):
+        x_train, x_test, y_train, y_test = split(x, y, test_size=frac, stratify=y)
+        test_idx = x_test.index
+    
+        discriminator = XGBClassifier(n_estimators=n_estimators, learning_rate=lr_gbc, 
+                                      max_depth=max_depth, n_jobs=-1, use_label_encoder=False,
+                                      objective='multi:softmax', eval_metric='mlogloss',
+                                      tree_method='gpu_hist')
+        discriminator.fit(x_train, y_train)
+        predictions = discriminator.predict(x_test)
+        f1.append(f1_score(y_test, predictions, average='macro'))
+        
+        if avg:
+            append = pd.DataFrame(f1_score(y_test, predictions, average=None)).reset_index()
+            append.columns = avg_out.columns
+            avg_out = avg_out.append(append, ignore_index=True, sort=False)
+            
+        if wrong:
+            append = pd.DataFrame({'index': test_idx, 'real': y_test, 'pred': predictions})
+            wrong_out.append(append, ignore_index=True, sort=False)
+            wrong_out = wrong_out.loc[wrong_out.real != wrong_out.pred]
+            
+    if avg and wrong:
+        print('Choose either avg=True or wrong=True')
+        return np.mean(f1)
+    
+    elif avg:
+        return avg_out.groupby('speaker_id').mean()
+    
+    elif wrong:
+        return wrong_out.drop_duplicates().reset_index(drop=True)
+            
+    else:
+        return np.mean(f1)
+    
+def cv_nn(x, y, transforms, drop, lr_nn, epochs, layers=3, output=9, cv=10, frac=0.1, over=True, avg=False, wrong=False):
+    avg_out = pd.DataFrame(columns=['speaker_id', 'f1'])
+    wrong_out = pd.DataFrame(columns=['index', 'real', 'pred'])
+    f1 = []
+    
+    for i in range(cv):
+        torch.cuda.empty_cache()
+        x_train, x_test, y_train, y_test = split(x, y, test_size=frac, stratify=y)
+        
+        if over:
+            oversample = SMOTE(n_jobs=-1)
+            x_train, y_train = oversample.fit_resample(x_train, y_train)
+        
+        test = x_test.index
+        
+        col_count = x_train.shape[1]
+        x_train, x_test = torch.from_numpy(x_train.values).to(device), torch.from_numpy(x_test.values).to(device)
+        y_train, y_test = torch.from_numpy(y_train.values).to(device), torch.from_numpy(y_test.values).to(device)
+        
+        train_set = [(x_train[i].to(device), y_train[i].to(device)) for i in range(len(y_train))]
+        train_loader = torch.utils.data.DataLoader(train_set, batch_size=2**10, shuffle=True)
+    
+        loss_function = nn.CrossEntropyLoss()
+        discriminator = Discriminator(col_count, transforms, drop, output, layers).to(device)
+        optim = torch.optim.Adam(discriminator.parameters(), lr=lr_nn)
+    
+        for epoch in range(epochs):
+            for i, (inputs, targets) in enumerate(train_loader):
+                discriminator.zero_grad()
+                yhat = discriminator(inputs.float())
+                loss = loss_function(yhat, targets.long())
+                loss.backward()
+                optim.step()
+                
+        test_hat = discriminator(x_test.float())
+        f1.append(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average='macro'))
+        
+        if avg:
+            append = pd.DataFrame(f1_score(y_test.cpu(), np.argmax(test_hat.cpu().detach().numpy(), axis=1), average=None)).reset_index()
+            append.columns = avg_out.columns
+            avg_out = avg_out.append(append, ignore_index=True, sort=False)
+            
+            
+        if wrong:
+            append = pd.DataFrame({'index': test, 'real':y_test.cpu().numpy(), 'pred':np.argmax(test_hat.cpu().detach().numpy(), axis=1)})
+            wrong_out = wrong_out.append(append, ignore_index=True, sort=False)
+    
+    if avg and wrong:
+        print('Choose either avg=True or wrong=True')
+        return np.mean(f1)
+    
+    elif avg:
+        return avg_out.groupby('speaker_id').mean()
+    
+    elif wrong:
+        wrong_out = wrong_out.loc[wrong_out.real != wrong_out.pred]
+        wrong_out = wrong_out.drop_duplicates().reset_index(drop=True)
+        return wrong_out
+            
+    else:
+        return np.mean(f1)
