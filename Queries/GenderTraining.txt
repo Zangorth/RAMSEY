@@ -1,0 +1,49 @@
+SET NOCOUNT ON
+
+SELECT id, [second], [source]
+INTO #gender
+FROM RAMSEY.training.Gender
+UNION
+SELECT id, [second]-1, [source]
+FROM RAMSEY.training.Gender
+UNION
+SELECT id, [second]-2, [source]
+FROM RAMSEY.training.Gender
+UNION
+SELECT id, [second]-3, [source]
+FROM RAMSEY.training.Gender
+UNION
+SELECT id, [second]-4, [source]
+FROM RAMSEY.training.Gender
+UNION
+SELECT id, [second]-5, [source]
+FROM RAMSEY.training.Gender
+UNION
+SELECT id, [second]+1, [source]
+FROM RAMSEY.training.Gender
+UNION
+SELECT id, [second]+2, [source]
+FROM RAMSEY.training.Gender
+UNION
+SELECT id, [second]+3, [source]
+FROM RAMSEY.training.Gender
+UNION
+SELECT id, [second]+4, [source]
+FROM RAMSEY.training.Gender
+UNION
+SELECT id, [second]+5, [source]
+FROM RAMSEY.training.Gender
+
+SELECT gender, code.*
+FROM #gender
+LEFT JOIN RAMSEY.training.Gender AS train
+    ON #gender.id = train.id
+    AND #gender.[second] = train.[second]
+LEFT JOIN RAMSEY.dbo.AudioCoding AS code
+    ON #gender.id = code.id
+    AND #gender.[second] = code.[second]
+LEFT JOIN RAMSEY.dbo.metadata AS meta
+    ON #gender.id = meta.id
+WHERE code.id IS NOT NULL
+    AND #gender.[source] != 'test'
+ORDER BY id, [second]

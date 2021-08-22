@@ -1,0 +1,52 @@
+SET NOCOUNT ON
+
+SELECT id, [second], [source]
+INTO #speakers
+FROM RAMSEY.training.Speaker
+UNION
+SELECT id, [second]-1, [source]
+FROM RAMSEY.training.Speaker
+UNION
+SELECT id, [second]-2, [source]
+FROM RAMSEY.training.Speaker
+UNION
+SELECT id, [second]-3, [source]
+FROM RAMSEY.training.Speaker
+UNION
+SELECT id, [second]-4, [source]
+FROM RAMSEY.training.Speaker
+UNION
+SELECT id, [second]-5, [source]
+FROM RAMSEY.training.Speaker
+UNION
+SELECT id, [second]+1, [source]
+FROM RAMSEY.training.Speaker
+UNION
+SELECT id, [second]+2, [source]
+FROM RAMSEY.training.Speaker
+UNION
+SELECT id, [second]+3, [source]
+FROM RAMSEY.training.Speaker
+UNION
+SELECT id, [second]+4, [source]
+FROM RAMSEY.training.Speaker
+UNION
+SELECT id, [second]+5, [source]
+FROM RAMSEY.training.Speaker
+
+SELECT speaker , YEAR(publish_date) AS 'publish_year', 
+    DATENAME(DW, publish_date) AS 'dow', 
+    CONCAT(YEAR(publish_date),'-',  DATENAME(DW, publish_date)) AS 'interaction',
+    #speakers.[source], code.*
+FROM #speakers
+LEFT JOIN RAMSEY.training.Speaker AS train
+    ON #speakers.id = train.id
+    AND #speakers.[second] = train.[second]
+LEFT JOIN RAMSEY.dbo.AudioCoding AS code
+    ON #speakers.id = code.id
+    AND #speakers.[second] = code.[second]
+LEFT JOIN RAMSEY.dbo.metadata AS meta
+    ON #speakers.id = meta.id
+WHERE code.id IS NOT NULL
+    AND #speakers.[source] != 'test'
+ORDER BY id, [second]
