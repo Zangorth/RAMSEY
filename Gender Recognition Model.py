@@ -27,9 +27,8 @@ from cross_validation import CV
 import ramsey_helpers as RH
 import arbitraryNN
 
-full = False
-include_gender = True
-optimize = True
+full = True
+optimize = False
 
 warnings.filterwarnings('error', category=ConvergenceWarning)
 warnings.filterwarnings(action='ignore', category=UserWarning)
@@ -43,7 +42,7 @@ con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
                   Server=ZANGORTH\HOMEBASE; DATABASE=RAMSEY; 
                   Trusted_Connection=yes;''')
                   
-query = open('Queries\\SpeakerTraining.txt').read()
+query = open('Queries\\GenderTraining.txt').read()
 
 train_audio = pd.read_sql(query, con)
 
@@ -51,36 +50,19 @@ if full:
     query = open('Queries\\FullAudio.txt').read()
     audio = pd.read_sql(query, con)
     audio = audio.dropna().reset_index(drop=True)
-    
-if include_gender:
-    query = 'SELECT id, [second], gender FROM RAMSEY.prediction.Gender'
-    gender = pd.read_sql(query, con)
-    gender = gender.merge(pd.get_dummies(gender['gender']), left_index=True, right_index=True, how='left')
-    gender = gender.drop('gender', axis=1)
-    
 
 con.close()
 
 ##############
 # Clean Data #
 ##############
-train_audio['y'] = train_audio['speaker'].astype('category').cat.codes
+train_audio['y'] = train_audio['gender'].astype('category').cat.codes
 y = train_audio['y']
 
-train_audio = train_audio.drop('source', axis=1)
-
-mapped = train_audio[['y', 'speaker']].drop_duplicates().reset_index(drop=True)
+mapped = train_audio[['y', 'gender']].drop_duplicates().reset_index(drop=True)
 mapped = mapped.loc[mapped.y != -1].sort_values('y').reset_index(drop=True)
 
-years = pd.get_dummies(train_audio['publish_year'])
-years.columns = [str(col) for col in years.columns]
-
-days = pd.get_dummies(train_audio['dow'])
-interaction = pd.get_dummies(train_audio['interaction'])
-
-exclude = list(years.columns) + list(days.columns) + list(interaction.columns)
-
-x = train_audio.drop(['id', 'second', 'speaker', 'y', 'publish_year', 'dow', 'interaction'], axis=1)
+x = train_audio.drop(['id', 'second', 'gender', 'y'], axis=1)
 save_cols = x.columns
 
 scaler = preprocessing.StandardScaler().fit(x)
@@ -92,18 +74,12 @@ pca = np.argmax(pca.fit_transform(x), axis=1)
 km = KMeans(6)
 km = np.argmax(km.fit_transform(x), axis=1)
 
-x = train_audio[['id', 'second']].merge(x, left_index=True, right_index=True)
-x = x.merge(years, left_index=True, right_index=True)
-x = x.merge(days, left_index=True, right_index=True)
-x = x.merge(interaction, left_index=True, right_index=True)
+x = train_audio[['id']].merge(x, left_index=True, right_index=True)
 x['pca'] = pca
 x['km'] = km
 
-if include_gender:
-    x = x.merge(gender, on=['id', 'second'], how='left')
-
 if full:
-    transform = audio.drop(['id', 'second', 'publish_year', 'dow', 'interaction'], axis=1)
+    transform = audio.drop(['id', 'second'], axis=1)
     save_cols = transform.columns
     
     transform = pd.DataFrame(scaler.transform(transform), columns=save_cols)
@@ -114,22 +90,9 @@ if full:
     km = KMeans(6)
     km = np.argmax(km.fit_transform(transform), axis=1)
     
-    years = pd.get_dummies(audio['publish_year'])
-    years.columns = [str(col) for col in years.columns]
-    
-    days = pd.get_dummies(audio['dow'])
-    interaction = pd.get_dummies(audio['interaction'])
-    
     audio = audio[['id', 'second']].merge(transform, right_index=True, left_index=True)
-    audio = audio.merge(years, right_index=True, left_index=True)
-    audio = audio.merge(days, right_index=True, left_index=True)
-    audio = audio.merge(interaction, right_index=True, left_index=True)
-    
     audio['pca'] = pca
     audio['km'] = km
-    
-    if include_gender:
-        audio = audio.merge(gender, on=['id', 'second'], how='left')
     
     audio = audio.dropna().reset_index(drop=True)
 
@@ -141,12 +104,11 @@ kwargs_out = None
 
 max_shift = 5
 space = [
-    skopt.space.Categorical(['nn'], name='model'),
+    skopt.space.Categorical(['logit', 'nn'], name='model'),
     skopt.space.Integer(0, max_shift, name='lags'),
     skopt.space.Integer(0, max_shift, name='leads'),
     skopt.space.Integer(0, 1, name='pca'),
     skopt.space.Integer(0, 1, name='km'),
-    skopt.space.Integer(0, 1, name='gender'),
     skopt.space.Integer(1, 5, name='layers'),
     skopt.space.Integer(1, 100, name='epochs'),
     skopt.space.Real(0.0001, 0.2, name='drop', prior='log-uniform'),
@@ -158,7 +120,7 @@ space = space + [skopt.space.Integer(2**2, 2**10, name=f'neuron_{i}') for i in r
 
 i = 0
 @skopt.utils.use_named_args(space)
-def net(model, lags, leads, km, pca, gender, over=False, **kwargs):
+def net(model, lags, leads, km, pca, over=False, **kwargs):
     lx = RH.shift(x, 'id', lags, leads)
     lx = lx.loc[y != -1].drop('id', axis=1).dropna()
     ly = y.loc[lx.index]
@@ -170,9 +132,6 @@ def net(model, lags, leads, km, pca, gender, over=False, **kwargs):
         
     if not km:
         lx = lx.drop('km', axis=1)
-        
-    if include_gender and not gender:
-        lx = lx.drop(['M', 'N', 'W'], axis=1)
     
     neurons = None if 'neuron_0' not in kwargs else [kwargs[key] for key in kwargs if 'neuron' in key]
     
@@ -201,14 +160,14 @@ if optimize:
     
     plt.figure(figsize=(50, 50))
     plots.plot_evaluations(result)
-    plt.savefig('SpeakerResults.png', bbox_inches='tight')
+    plt.savefig('GenderResults.png', bbox_inches='tight')
     
     print(f'Max F1: {result.fun}')
     
     results = {'model': result.x[0], 'lags': result.x[1], 'leads': result.x[2], 
-               'pca': result.x[3], 'km': result.x[4], 'gender': result.x[5]}
+               'pca': result.x[3], 'km': result.x[4]}
     
-    i = 6
+    i = 5
     for key in kwargs_out:
         results[key] = result.x[i]
         i += 1
@@ -217,15 +176,14 @@ if optimize:
     
     print(results)
     
-    pickle.dump(results, open('speaker_results.pkl', 'wb'))
+    pickle.dump(results, open('gender_results.pkl', 'wb'))
 else:
-    results = pickle.load(open('speaker_results.pkl', 'rb'))
-
-
+    results = pickle.load(open('gender_results.pkl', 'rb'))
+    
 ####################
 # Validate Network #
 ####################
-x = RH.shift(x, 'id', results['lags'], results['leads'], exclude=exclude)
+x = RH.shift(x, 'id', results['lags'], results['leads'])
 x = x.loc[y != -1].drop('id', axis=1).dropna()
 y = y.loc[x.index]
 
@@ -234,9 +192,8 @@ if results['pca'] == 0:
     
 if results['km'] == 0:
     x = x.drop('km', axis=1)
-    
-if include_gender and results['gender'] == 0:
-    x = x.drop(['M', 'N', 'W'], axis=1)
+
+test_audio = train_audio.iloc[x.index]
 
 x, y = x.reset_index(drop=True), y.reset_index(drop=True)
 
@@ -260,7 +217,7 @@ print(avg.mean())
 ###############
 # Predictions #
 ###############
-predictions = pd.DataFrame(columns=['id', 'second', 'rediction'])
+predictions = pd.DataFrame(columns=['id', 'second', 'prediction'])
 
 if results['model'] == 'logit':
     discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
@@ -274,7 +231,7 @@ if results['model'] == 'logit':
         print(f'{i}:{i+100000} / {len(audio)}')
         
         audio_x = audio.iloc[i:i+100000]
-        audio_x = RH.shift(audio_x, 'id', results['lags'], results['leads'], exclude=['second'] + exclude + ['2014-Saturday'])
+        audio_x = RH.shift(audio_x, 'id', results['lags'], results['leads'])
         audio_x = audio_x.dropna()
         
         audio_x['prediction'] = discriminator.predict(audio_x.drop([col for col in audio_x.columns if col not in x.columns], axis=1).values.tolist())
@@ -294,7 +251,7 @@ elif results['model'] == 'nn':
         print(f'{i}:{i+100000} / {len(audio)}')
         
         audio_x = audio.iloc[i:i+100000]
-        audio_x = RH.shift(audio_x, 'id', results['lags'], results['leads'], exclude=['second'] + exclude + ['2014-Saturday'])
+        audio_x = RH.shift(audio_x, 'id', results['lags'], results['leads'])
         audio_x = audio_x.dropna()
         
         audio_x['prediction'] = discriminator.predict(audio_x.drop([col for col in audio_x.columns if col not in x.columns], axis=1))
@@ -317,4 +274,4 @@ con = urllib.parse.quote_plus(conn_str)
 
 engine = create_engine(f'mssql+pyodbc:///?odbc_connect={con}')
 
-predictions.to_sql(name='Speaker', con=engine, schema='prediction', if_exists='replace', index=False)
+predictions.to_sql(name='Gender', con=engine, schema='prediction', if_exists='replace', index=False)
