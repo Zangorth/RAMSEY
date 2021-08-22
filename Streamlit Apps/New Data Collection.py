@@ -1,6 +1,4 @@
-from numpy.random import randint
 from pytube import Playlist
-from time import sleep
 import streamlit as st
 import pyodbc as sql
 import pandas as pd
@@ -9,6 +7,7 @@ import sys
 sys.path.append(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey')
 import ramsey_helpers as RH
 
+st.set_page_config(layout='wide')
 st.title('The Ramsey Highlights')
 st.header('New Data Collection')
 
