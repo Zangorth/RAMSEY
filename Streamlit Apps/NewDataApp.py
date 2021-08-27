@@ -8,11 +8,12 @@ st.set_page_config(layout='wide')
 st.title('The Ramsey Highlights')
 st.header('New Data Collection')
 
-login = st.sidebar.form('Login')
-username = login.text_input('Username:', 'guest_login')
-password = login.text_input('Password:', 'ReadOnly!23')
-submit = login.form_submit_button()
-
+with st.sidebar.expander('Credentials'):
+    login = st.form('Login', clear_on_submit=True)
+    username = login.text_input('Username:', 'guest_login')
+    password = login.text_input('Password:', 'ReadOnly!23')
+    submit = login.form_submit_button()
+    
 options = st.sidebar.radio('', ['All Data', 'Link'])
 
 if options == 'Link':
@@ -26,7 +27,7 @@ if options == 'Link':
         data_collect(video_link, username, password, audio_location, transcript_location)
 
 if options == 'All Data':
-    personality = st.sidebar.text_input('Personality:', 'Ramsey')
+    personality = st.sidebar.selectbox('Personality', ['ramsey', 'deloney', 'coleman', 'ao', 'cruze', 'wright', 'kamel'])
     audio_location = st.sidebar.text_input('Audio Path:', f'C:\\Users\\Samuel\\Google Drive\\Portfolio\\Ramsey\\Audio\\Audio Full\\{personality}')
     transcript_location = st.sidebar.text_input('Transcript Path:', f'C:\\Users\\Samuel\\Google Drive\\Portfolio\\Ramsey\\Audio\\Transcript\\{personality}')
     
