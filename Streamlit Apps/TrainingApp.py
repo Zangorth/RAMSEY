@@ -1,11 +1,13 @@
+from urllib.request import urlopen
 from pydub.playback import play
 from pydub import AudioSegment
+from io import BytesIO
 import streamlit as st
 import pyodbc as sql
 import pandas as pd
 
 personalities = ['Ramsey', 'Deloney', 'Coleman', 'AO', 'Cruze', 'Wright', 'Kamel']
-
+api = 'AIzaSyAftHJhz8-5UUOACb46YBLchKL78yrXpbw'
 
 st.title('The Ramsey Highlights')
 st.header('Model Training')
@@ -31,23 +33,27 @@ left_side, right_side = st.sidebar.columns(2)
 equality = left_side.selectbox('Year (Optional)', ['=', '>', '<'])
 year = right_side.text_input('')
 
-year_filter = '' if year == '' else f'AND YEAR(publish_date) {equality} {year}'
+year_filter = 'YEAR(publish_date) IS NOT NULL' if year == '' else f'AND YEAR(publish_date) {equality} {year}'
 channel_filter = f'({", ".join(channel)})'
 
 begin = st.sidebar.button('BEGIN TRAINING')
 
 if begin:
     query = f'''
-    SELECT audio.id, [second], audio.channel, 
-        YEAR(publish_date) AS 'year', link
-    FROM ramsey.audio
+    SELECT audio.channel, audio.id, [second],
+        YEAR(publish_date) AS 'year', link, drive
+    FROM
+        (SELECT channel, id, MAX(second) AS [second]
+        FROM ramsey.audio
+        WHERE audio.channel IN {channel_filter}
+        GROUP BY channel, id) audio
     LEFT JOIN ramsey.metadata
         ON metadata.channel = audio.channel
         AND metadata.id = audio.id
-    WHERE audio.channel IN {channel_filter} {year_filter}
+    WHERE {year_filter}
     '''
     
-    with st.spinner('Reading Data from Azure'):
+    with st.spinner('Reading Data from Azure... This could take several minutes...'):
         connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
                               'Server=zangorth.database.windows.net;DATABASE=HomeBase;' +
                               f'UID={username};PWD={password}')
@@ -68,8 +74,11 @@ if 'panda' in st.session_state:
     sample = st.session_state['panda']['id'][i]
     second = st.session_state['panda']['second'][i]
     link = st.session_state['panda']['link'][i]
+    drive = st.session_state['panda']['drive'][i]
     
-    sound = AudioSegment.from_file(f'C:\\Users\\Samuel\\Google Drive\\Portfolio\\Ramsey\\Audio\\Audio Full\\{personality}\\{sample} {personality}.mp3')
+    sound_byte = BytesIO(urlopen(f'https://www.googleapis.com/drive/v3/files/{drive}?key={api}&alt=media').read())
+    sound = AudioSegment.from_file(sound_byte)
+    
     lead = sound[second*1000-3000: second*1000+3000]
     sound = sound[second*1000:second*1000+1000]
     
