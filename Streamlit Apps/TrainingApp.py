@@ -1,4 +1,5 @@
 from urllib.request import urlopen
+from numpy.random import randint
 from pydub.playback import play
 from pydub import AudioSegment
 from io import BytesIO
@@ -15,12 +16,12 @@ st.header('Model Training')
 with st.sidebar.expander('Credentials'):
     login = st.form('Login', clear_on_submit=True)
     username = login.text_input('Username:', 'guest_login')
-    password = login.text_input('Password:', 'ReadOnly!23')
+    password = login.text_input('Password:', 'ReadOnly!23', type='password')
     submit = login.form_submit_button()
     
 st.write('')
 st.sidebar.subheader('Models to Train')
-models = st.sidebar.multiselect('Select All That Apply', ['Speaker', 'Gender'])
+models = st.sidebar.multiselect('Select All That Apply', ['Speaker', 'Gender'], ['Speaker', 'Gender'])
 models = [m.lower() for m in models]
 
 st.write('')
@@ -33,7 +34,7 @@ left_side, right_side = st.sidebar.columns(2)
 equality = left_side.selectbox('Year (Optional)', ['=', '>', '<'])
 year = right_side.text_input('')
 
-year_filter = 'YEAR(publish_date) IS NOT NULL' if year == '' else f'AND YEAR(publish_date) {equality} {year}'
+year_filter = 'YEAR(publish_date) IS NOT NULL' if year == '' else f'YEAR(publish_date) {equality} {year}'
 channel_filter = f'({", ".join(channel)})'
 
 begin = st.sidebar.button('BEGIN TRAINING')
@@ -72,7 +73,7 @@ if 'panda' in st.session_state:
     i = st.session_state['i']
     personality = st.session_state['panda']['channel'][i]
     sample = st.session_state['panda']['id'][i]
-    second = st.session_state['panda']['second'][i]
+    second = randint(0, st.session_state['panda']['second'][i]-1)
     link = st.session_state['panda']['link'][i]
     drive = st.session_state['panda']['drive'][i]
     
@@ -92,25 +93,28 @@ if 'panda' in st.session_state:
     if 'speaker' in models and 'gender' in models:
         upload_form = st.form('upload_both', clear_on_submit=True)
         left, right = upload_form.columns(2)
-        left.radio('Speaker', personalities + ['Hogan', 'None'])
-        right.radio('Gender', ['Man', 'Woman', 'None'])
+        speaker_upload = left.radio('Speaker', personalities + ['Hogan', 'None'])
+        gender_upload = right.radio('Gender', ['Man', 'Woman', 'None'])
         send = upload_form.form_submit_button()
         
         st.session_state['i'] += 1
         
     elif 'speaker' in models:
         upload_form = st.form('upload_speaker', clear_on_submit=True)
-        upload_form.radio('Speaker', personalities + ['Hogan', 'None'])
+        speaker_upload = upload_form.radio('Speaker', personalities + ['Hogan', 'None'])
         send = upload_form.form_submit_button()
         
         st.session_state['i'] += 1
         
     elif 'gender' in models:
         upload_form = st.form('upload_gender', clear_on_submit=True)
-        upload_form.radio('Gender', personalities + ['Hogan', 'None'])
+        gender_upload = upload_form.radio('Gender', personalities + ['Hogan', 'None'])
         send = upload_form.form_submit_button()
         
         st.session_state['i'] += 1
+        
+    if send:
+        st.write(f'Speaker: {speaker_upload} | Gender: {gender_upload}')
     
     
     

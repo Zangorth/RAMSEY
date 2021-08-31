@@ -1,4 +1,4 @@
-from ramsey import data_collect
+from helpers.ramsey import data_collect
 from pytube import Playlist
 import streamlit as st
 import pyodbc as sql
@@ -11,7 +11,7 @@ st.header('New Data Collection')
 with st.sidebar.expander('Credentials'):
     login = st.form('Login', clear_on_submit=True)
     username = login.text_input('Username:', 'guest_login')
-    password = login.text_input('Password:', 'ReadOnly!23')
+    password = login.text_input('Password:', 'ReadOnly!23', type='password')
     submit = login.form_submit_button()
     
 options = st.sidebar.radio('', ['All Data', 'Link'])
@@ -42,10 +42,8 @@ if options == 'All Data':
     run = st.sidebar.button('BEGIN COLLECTION')
         
     if run:
-        lp = personality.lower().strip()
-    
         with st.spinner('Identifying New Videos'):
-            videos = Playlist(personalities[personality.lower().strip()]).video_urls
+            videos = Playlist(personalities[personality]).video_urls
             videos = list(videos)
             
             connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
@@ -92,10 +90,3 @@ if options == 'All Data':
             st.write('')
             st.write('Audio Code')
             st.dataframe(audio_frame)
-                    
-                
-                
-                
-                
-                
-    
