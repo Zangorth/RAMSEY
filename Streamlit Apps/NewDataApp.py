@@ -5,7 +5,6 @@ import pyodbc as sql
 import pandas as pd
 
 def collect():
-    st.set_page_config(layout='wide')
     st.title('The Ramsey Highlights')
     st.header('New Data Collection')
     
