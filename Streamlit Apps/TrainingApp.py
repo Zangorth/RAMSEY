@@ -162,13 +162,3 @@ if st.session_state['panda'] != '':
                 st.write('Data from Guest Profiles will not be uploaded')
             
             st.session_state.panda = ''
-            
-            #st.experimental_rerun()
-        
-        # if username == 'zangorth':
-        #     with st.spinner('Uploading Data to Azure'):
-        #         upload(loadup, 'training', username, password)
-                
-        # else:
-        #     with st.spinner('Guest Users are not Allowed to Upload Data'):
-        #         sleep(3)
