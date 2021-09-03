@@ -1,5 +1,5 @@
+from helpers.ramsey import upload, reindex
 from urllib.request import urlopen
-from helpers.ramsey import upload
 from pydub.playback import play
 from pydub import AudioSegment
 from time import sleep
@@ -11,6 +11,7 @@ import numpy as np
 
 personalities = ['Ramsey', 'Deloney', 'Coleman', 'AO', 'Cruze', 'Wright', 'Kamel']
 api = 'AIzaSyAftHJhz8-5UUOACb46YBLchKL78yrXpbw'
+st.session_state['panda'] = ''
 
 st.title('The Ramsey Highlights')
 st.header('Model Training')
@@ -56,20 +57,20 @@ if begin:
                               f'UID={username};PWD={password}')
         con = sql.connect(connection_string)
         collected = pd.read_sql(query, con)
-        checked = pd.read_sql('SELECT * FROM ramsey.training', con)
+        trained = pd.read_sql('SELECT * FROM ramsey.training', con)
         con.close()
         
-        
-        
         collected = collected.sample(100000, replace=True, weights=collected['seconds']).reset_index(drop=True)
+        trained['sample'] = 'old'
         
         st.session_state['panda'] = collected
+        st.session_state['trained'] = trained
         st.session_state['i'] = 0
         st.session_state['seed'] = np.random.randint(1, 1000000)
         st.session_state['sound'] = ''
         
         
-if 'panda' in st.session_state:
+if st.session_state['panda'] != '':
     i = st.session_state['i']
     st.session_state['old_eye'] = i
     rng = np.random.default_rng(st.session_state['seed']+i)
@@ -77,7 +78,7 @@ if 'panda' in st.session_state:
     personality = st.session_state['panda']['channel'][i]
     sample = st.session_state['panda']['id'][i]
     second = rng.integers(0, st.session_state['panda']['seconds'][i]-1)
-    link = st.session_state['panda']['link'][i]
+    video_link = st.session_state['panda']['link'][i].split('v=')[-1]
     drive = st.session_state['panda']['drive'][i]
     
     if st.session_state['sound'] == '':
@@ -101,12 +102,16 @@ if 'panda' in st.session_state:
     
     replay = left.button('REPLAY')
     context = middle.button('CONTEXT')
+    link = right.button('LINK')
     
     if replay:
         play(sound)
     
     if context:
         play(lead)
+        
+    if link:
+        st.write(f'https://youtu.be/{video_link}?t={second-3}')
     
     if 'speaker' in models and 'gender' in models:
         upload_form = st.form('upload_both', clear_on_submit=True)
@@ -128,19 +133,42 @@ if 'panda' in st.session_state:
         send = upload_form.form_submit_button()
         
     if send:
-        loadup = pd.DataFrame({'channel': [personality], 'id': [sample], 'second': [second],
-                               'speaker': speaker_upload, 'gender': gender_upload})
+        new = pd.DataFrame({'channel': [personality], 'id': [sample], 'second': [second],
+                            'speaker': [speaker_upload], 'gender': [gender_upload],
+                            'sample': ['new']})
         
-        if username == 'zangorth':
-            with st.spinner('Uploading Data to Azure'):
-                upload(loadup, 'training', username, password)
-                
-        else:
-            with st.spinner('Guest Users are not Allowed to Upload Data'):
-                sleep(3)
+        temp = st.session_state['trained'].merge(new, how='outer', on=['channel', 'id', 'second'])
+        
+        temp['speaker'] = np.where(temp.speaker_x.isnull(), temp.speaker_y, temp.speaker_x)
+        temp['gender'] = np.where(temp.gender_x.isnull(), temp.gender_y, temp.gender_x)
+        temp['sample'] = np.where(temp.sample_x.isnull(), temp.sample_y, temp.sample_x)
+        
+        st.session_state['trained'] = temp[['channel', 'id', 'second', 'speaker', 'gender', 'sample']]
         
         st.session_state['i'] = i + 1
         st.session_state['sound'] = ''
-        st.write(f'Speaker: {speaker_upload} | Gender: {gender_upload}')
         
         st.experimental_rerun()
+        
+    if st.session_state['i'] > 0:
+        azure = st.button('AZURE UPLOAD')
+        
+        if azure:
+            if username == 'zangorth':
+                upload(st.session_state['trained'], 'ramsey', 'training', username, password, 'replace')
+                reindex('ramsey', 'training', ['channel', 'id', 'second'], username, password)
+                
+            else:
+                st.write('Data from Guest Profiles will not be uploaded')
+            
+            st.session_state.panda = ''
+            
+            #st.experimental_rerun()
+        
+        # if username == 'zangorth':
+        #     with st.spinner('Uploading Data to Azure'):
+        #         upload(loadup, 'training', username, password)
+                
+        # else:
+        #     with st.spinner('Guest Users are not Allowed to Upload Data'):
+        #         sleep(3)
