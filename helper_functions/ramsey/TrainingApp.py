@@ -118,13 +118,13 @@ def train():
         
         if 'speaker' in models and 'gender' in models:
             upload_form = st.form('upload_both', clear_on_submit=True)
-            left, right = upload_form.columns(2)
+            left, middle, right = upload_form.columns(3)
             
             speaker_upload = left.radio('Speaker', personalities + ['Hogan', 'Guest', 'None'])
             speaker_year = st.session_state['restrict_year']
             speaker_channel = st.session_state['restrict_channel']
             
-            gender_upload = right.radio('Gender', ['Man', 'Woman', 'None'])
+            gender_upload = middle.radio('Gender', ['Man', 'Woman', 'None'])
             gender_year = st.session_state['restrict_year']
             gender_channel = st.session_state['restrict_channel']
             
