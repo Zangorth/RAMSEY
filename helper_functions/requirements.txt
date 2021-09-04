@@ -1,0 +1,9 @@
+pandas
+numpy
+SQLAlchemy
+pytube
+pyodbc
+youtube_transcript_api
+librosa
+pydub
+streamlit
