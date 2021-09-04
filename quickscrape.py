@@ -58,11 +58,17 @@ for video_link in videos:
         iterables = new.iterables()
         iterables = [[personality, metadata.id.item(), sound[0], sound[1]] for sound in iterables]
         
-        ray.init(num_cpus=16)
-        audio_coding = ray.get([encode_audio.remote(sound) for sound in iterables])
-        audio_coding = pd.concat(audio_coding)
-        audio_coding.columns = columns
-        ray.shutdown()
+        audio_coding = None
+        
+        while audio_coding is None:
+            try:
+                ray.init(num_cpus=16, ignore_reinit_error=True)
+                audio_coding = ray.get([encode_audio.remote(sound) for sound in iterables])
+                audio_coding = pd.concat(audio_coding)
+                audio_coding.columns = columns
+                ray.shutdown()
+            except Exception:
+                audio_coding = None
         
         metadata['seconds'] = audio_coding['second'].max()
         
