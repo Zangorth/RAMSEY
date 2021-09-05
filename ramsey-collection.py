@@ -1,5 +1,4 @@
-from ramsey.NewDataApp import collect
-from ramsey.TrainingApp import train
+from ramsey.streamlit import collect, train
 from streamlit import caching
 import streamlit as st
 

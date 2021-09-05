@@ -96,7 +96,7 @@ def collect():
                 st.write('Audio Code')
                 st.dataframe(audio_frame)
 
-def train(local=True):
+def train():
     personalities = ['Ramsey', 'Deloney', 'Coleman', 'AO', 'Cruze', 'Wright', 'Kamel']
     api = 'AIzaSyAftHJhz8-5UUOACb46YBLchKL78yrXpbw'
     
@@ -107,12 +107,15 @@ def train(local=True):
         login = st.form('Login', clear_on_submit=True)
         username = login.text_input('Username:', 'guest_login')
         password = login.text_input('Password:', 'ReadOnly!23', type='password')
+        gdrive = login.selectbox('Use Google Drive:', ['No', 'Yes'])
         submit = login.form_submit_button()
         
     st.write('')
     st.sidebar.subheader('Models to Train')
     models = st.sidebar.multiselect('Select All That Apply', ['Speaker', 'Gender'], ['Speaker', 'Gender'])
     models = [m.lower() for m in models]
+    
+    local = True if gdrive == 'No' else False
     
     st.write('')
     st.sidebar.subheader('Filters')    
