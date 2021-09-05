@@ -46,6 +46,7 @@ def train():
         SELECT * 
         FROM ramsey.metadata
         WHERE seconds <= 900
+            AND drive IS NOT NULL
             AND channel IN {channel_filter}
             AND {year_filter}
         '''
@@ -59,28 +60,27 @@ def train():
             trained = pd.read_sql('SELECT * FROM ramsey.training', con)
             con.close()
             
-            collected = collected.sample(100000, replace=True, weights=collected['seconds']).reset_index(drop=True)
+            collected = collected.loc[collected.index.repeat(collected.seconds)]
+            collected['second'] = collected.groupby(['channel', 'id']).cumcount()
+            collected = collected.merge(trained[['channel', 'id', 'second', 'speaker', 'gender']], how='left')
+            collected = collected.loc[(collected['speaker'].isnull()) | (collected['gender'].isnull())]
+            collected = collected.sample(frac=1).reset_index(drop=True)
             
             st.session_state['panda'] = collected
             st.session_state['trained'] = trained
             st.session_state['i'] = 0
-            st.session_state['seed'] = np.random.randint(1, 1000000)
             st.session_state['sound'] = ''
             
             st.session_state['restrict_year'] = 'all' if year_filter == 'YEAR(publish_date) IS NOT NULL' else f'{equality}{year}'
             st.session_state['restrict_channel'] = 'all' if len(channel) == 7 else '|'.join(channel)
             
-            st.session_state['sample'] = f'{"|".join(channel)}{equality}{year}'
-            
     
     if 'panda' in st.session_state:
         i = st.session_state['i']
-        st.session_state['old_eye'] = i
-        rng = np.random.default_rng(st.session_state['seed']+i)
         
         personality = st.session_state['panda']['channel'][i]
         sample = st.session_state['panda']['id'][i]
-        second = rng.integers(0, st.session_state['panda']['seconds'][i]-1)
+        second = st.session_state['panda']['second'][i]
         video_link = st.session_state['panda']['link'][i].split('v=')[-1]
         drive = st.session_state['panda']['drive'][i]
         
