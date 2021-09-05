@@ -198,7 +198,7 @@ def reindex(schema, table, index, username, password, alter = {'channel': 'VARCH
 ###########################
 # Streamlit: Data Collect #
 ###########################
-def data_collect(video_link, username, password, audio_location, transcript_location, verbose=True, parallel=False):
+def data_collect(video_link, username, password, audio_location, transcript_location, verbose=True):
     with st.spinner('Downloading Audio'):
         new = Scrape(video_link, username, password, audio_location, transcript_location)
         metadata = new.metadata()
