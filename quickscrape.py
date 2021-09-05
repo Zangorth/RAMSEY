@@ -14,7 +14,7 @@ from encode_audio import encode_audio
 ###############
 # Scrape Data #
 ###############
-personality = 'wright'
+personality = 'coleman'
 username = 'zangorth'
 password = open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\password.txt', 'r').read()
 
@@ -44,6 +44,7 @@ con.close()
 videos = list(set(videos) - set(collected['link']))
 video_link = videos[0]
 
+ray.init(num_cpus=16)
 i = 1
 for video_link in videos:
     print(f'{i}/{len(videos)}')
@@ -58,19 +59,13 @@ for video_link in videos:
         iterables = new.iterables()
         iterables = [[personality, metadata.id.item(), sound[0], sound[1]] for sound in iterables]
         
-        audio_coding = None
-        
-        while audio_coding is None:
-            try:
-                ray.init(num_cpus=16, ignore_reinit_error=True)
-                audio_coding = ray.get([encode_audio.remote(sound) for sound in iterables])
-                audio_coding = pd.concat(audio_coding)
-                audio_coding.columns = columns
-                ray.shutdown()
-            except Exception:
-                audio_coding = None
-        
+        audio_coding = ray.get([encode_audio.remote(sound) for sound in iterables])
+        audio_coding = pd.concat(audio_coding)
+        audio_coding.columns = columns
+
         metadata['seconds'] = audio_coding['second'].max()
         
         ramsey.upload(metadata, 'ramsey', 'metadata', username, password)
         ramsey.upload(audio_coding, 'ramsey', 'audio', username, password)
+        
+ray.shutdown()
