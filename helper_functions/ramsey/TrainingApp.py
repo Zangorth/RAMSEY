@@ -8,7 +8,7 @@ import pyodbc as sql
 import pandas as pd
 import numpy as np
 
-def train():
+def train(local=True):
     personalities = ['Ramsey', 'Deloney', 'Coleman', 'AO', 'Cruze', 'Wright', 'Kamel']
     api = 'AIzaSyAftHJhz8-5UUOACb46YBLchKL78yrXpbw'
     
@@ -85,7 +85,11 @@ def train():
         drive = st.session_state['panda']['drive'][i]
         
         if st.session_state['sound'] == '':
-            sound_byte = BytesIO(urlopen(f'https://www.googleapis.com/drive/v3/files/{drive}?key={api}&alt=media').read())
+            if local:
+                sound_byte = f'C:\\Users\\Samuel\\Google Drive\\Portfolio\\Ramsey\\Audio\\Audio Full\\{personality}\\{sample} {personality}.mp3'
+            else:
+                sound_byte = BytesIO(urlopen(f'https://www.googleapis.com/drive/v3/files/{drive}?key={api}&alt=media').read())
+                
             st.session_state['sound'] = AudioSegment.from_file(sound_byte)
         
             sound = st.session_state['sound']
