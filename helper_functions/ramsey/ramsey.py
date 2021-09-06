@@ -206,7 +206,6 @@ def data_collect(video_link, username, password, audio_location, transcript_loca
         new.transcript()
     
     if type(metadata) == str:
-        st.write(metadata)
         return []
     
     elif type(metadata) == pd.core.frame.DataFrame:

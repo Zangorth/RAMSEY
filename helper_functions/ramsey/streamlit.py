@@ -102,7 +102,7 @@ def collect():
                             audio_frame = audio_frame.append(out[1], ignore_index=True, sort=False)
                             
                     except:
-                        st.write(f'Broken: {video}')
+                        pass
                     
                 st.write('Meta Data')
                 st.dataframe(meta_frame)
@@ -171,7 +171,7 @@ def train():
             collected = collected.sample(frac=1).reset_index(drop=True)
             
             st.session_state['panda'] = collected
-            st.session_state['trained'] = trained
+            st.session_state['trained'] = pd.DataFrame(columns=trained.columns)
             st.session_state['i'] = 0
             st.session_state['sound'] = ''
             
@@ -240,13 +240,7 @@ def train():
                                 'speaker': [speaker_upload], 'gender': [gender_upload],
                                 'slice': [slce.replace("'", "")]})
             
-            temp = st.session_state['trained'].merge(new, how='outer', on=['channel', 'id', 'second'])
-            
-            temp['speaker'] = np.where(temp.speaker_x.isnull(), temp.speaker_y, temp.speaker_x)
-            temp['gender'] = np.where(temp.gender_x.isnull(), temp.gender_y, temp.gender_x)
-            temp['slice'] = np.where(temp.slice_x.isnull(), temp.slice_y, temp.slice_x)
-            
-            st.session_state['trained'] = temp[['channel', 'id', 'second', 'speaker', 'gender', 'slice']]
+            st.session_state['trained'] = st.session_state['trained'].append(new, ignore_index=True, sort=False)
             
             st.session_state['i'] = i + 1
             st.session_state['sound'] = ''
@@ -259,7 +253,7 @@ def train():
             if azure:
                 with st.spinner('Uploading to Azure'):
                     if username == 'zangorth':
-                        upload(st.session_state['trained'], 'ramsey', 'training', username, password, 'replace')
+                        upload(st.session_state['trained'], 'ramsey', 'training', username, password)
                         reindex('ramsey', 'training', ['channel', 'id', 'second'], username, password)
                         st.write('Upload Complete')
                         
