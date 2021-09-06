@@ -254,7 +254,6 @@ def train():
                 with st.spinner('Uploading to Azure'):
                     if username == 'zangorth':
                         upload(st.session_state['trained'], 'ramsey', 'training', username, password)
-                        reindex('ramsey', 'training', ['channel', 'id', 'second'], username, password)
                         st.write('Upload Complete')
                         
                     else:
