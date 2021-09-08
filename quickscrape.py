@@ -48,7 +48,7 @@ def encode_audio(sound):
 ###############
 # Scrape Data #
 ###############
-personality = 'coleman'
+personality = 'cruze'
 username = 'zangorth'
 password = open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\password.txt', 'r').read()
 
