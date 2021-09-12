@@ -48,7 +48,7 @@ def encode_audio(sound):
 ###############
 # Scrape Data #
 ###############
-personality = 'cruze'
+personality = 'coleman'
 username = 'zangorth'
 password = open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\password.txt', 'r').read()
 
@@ -67,8 +67,8 @@ videos = Playlist(personalities[personality]).video_urls
 videos = list(videos)
 
 connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
-                     'Server=zangorth.database.windows.net;DATABASE=HomeBase;' +
-                     f'UID={username};PWD={password}')
+                     'Server=ZANGORTH\HOMEBASE;DATABASE=HomeBase;' +
+                     'Trusted_Connection=yes;')
 con = sql.connect(connection_string)
 query = 'SELECT * FROM ramsey.metadata'
 collected = pd.read_sql(query, con)
@@ -84,10 +84,14 @@ for video_link in videos:
     print(f'{i}/{len(videos)}')
     i += 1
     
-    new = ramsey.Scrape(video_link, username, password, audio_location, transcript_location)
-    metadata = new.metadata()
-    new.audio()
-    new.transcript()
+    try:
+        new = ramsey.Scrape(video_link, audio_location, transcript_location)
+        metadata = new.metadata()
+        new.audio()
+        new.transcript()
+        
+    except Exception:
+        metadata = ''
     
     if type(metadata) != str:
         iterables = new.iterables()
@@ -99,7 +103,7 @@ for video_link in videos:
 
         metadata['seconds'] = audio_coding['second'].max()
         
-        ramsey.upload(metadata, 'ramsey', 'metadata', username, password)
-        ramsey.upload(audio_coding, 'ramsey', 'audio', username, password)
+        ramsey.upload(metadata, 'ramsey', 'metadata')
+        ramsey.upload(audio_coding, 'ramsey', 'audio')
         
 ray.shutdown()

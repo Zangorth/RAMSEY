@@ -24,10 +24,9 @@ class NoTranscriptFound(Exception):
 # Data Scrape #
 ###############
 class Scrape():
-    def __init__(self, link, username, password, audio_location, transcript_location):
+    def __init__(self, link, audio_location, transcript_location):
         self.link = link
         self.audio_location, self.transcript_location = audio_location, transcript_location
-        self.username, self.password = username, password
         
         self.personalities = {'UC7eBNeDW1GQf2NJQ6G6gAxw': 'ramsey',
                               'UC4HiMKM8WLcNbt9ae_XNRNQ': 'deloney',
@@ -41,8 +40,8 @@ class Scrape():
 
     def metadata(self):
         connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
-                             'Server=zangorth.database.windows.net;DATABASE=HomeBase;' +
-                             f'UID={self.username};PWD={self.password}')                             
+                             'Server=ZANGORTH\HOMEBASE;DATABASE=HomeBase;' +
+                             'Trusted_Connection=yes;') 
         con = sql.connect(connection_string)
         query = 'SELECT * FROM [ramsey].[metadata]'
         collected = pd.read_sql(query, con)
@@ -148,18 +147,16 @@ class Scrape():
 ###############
 # Upload Data #
 ###############
-def upload(dataframe, schema, table, username, password, exists='append'):
-    if 'guest' not in username:
-        conn_str = (
-                r'Driver={ODBC Driver 17 for SQL Server};'
-                r'Server=zangorth.database.windows.net;'
-                r'Database=HomeBase;'
-                f'UID={username};'
-                f'PWD={password};'
-            )
-        azure = urllib.parse.quote_plus(conn_str)
-        engine = create_engine(f'mssql+pyodbc:///?odbc_connect={azure}')
-        dataframe.to_sql(name=table, con=engine, schema=schema, if_exists=exists, index=False)
+def upload(dataframe, schema, table, exists='append'):
+    conn_str = (
+            r'Driver={ODBC Driver 17 for SQL Server};'
+            r'Server=ZANGORTH\HOMEBASE;'
+            r'Database=HomeBase;'
+            'Trusted_Connection=yes;'
+        )
+    con = urllib.parse.quote_plus(conn_str)
+    engine = create_engine(f'mssql+pyodbc:///?odbc_connect={con}')
+    dataframe.to_sql(name=table, con=engine, schema=schema, if_exists=exists, index=False)
     
     return None
 
@@ -194,61 +191,6 @@ def reindex(schema, table, index, username, password, alter = {'channel': 'VARCH
         azure.close()
         
     return None
-
-###########################
-# Streamlit: Data Collect #
-###########################
-def data_collect(video_link, username, password, audio_location, transcript_location, verbose=True):
-    with st.spinner('Downloading Audio'):
-        new = Scrape(video_link, username, password, audio_location, transcript_location)
-        metadata = new.metadata()
-        new.audio()
-        new.transcript()
-    
-    if type(metadata) == str:
-        return []
-    
-    elif type(metadata) == pd.core.frame.DataFrame:
-        if verbose:
-            st.write('Meta Data')
-            st.dataframe(metadata, width=5000)
-        
-        with st.spinner('Generating Audio Slices'):
-            iterables = new.iterables()
-                
-        iteration = st.empty()
-        i, pb = 0, st.progress(0)
-        audio_coding = []
-        for sound in iterables:
-            audio_coding.append(new.encode_audio(sound))
-            
-            iteration.text(f'Encoding Audio - Seconds Processed: {i+1}/{len(iterables)}')
-            pb.progress((i+1)/len(iterables))
-            
-            i += 1
-                
-        iteration.empty()
-        pb.empty()
-    
-        audio_coding = pd.concat(audio_coding)
-        
-        if 'guest' in username and verbose:
-            st.write('Data from Guest Profiles will not be uploaded')
-        
-        elif username == 'zangorth':
-            with st.spinner('Uploading Metadata'):
-                metadata['seconds'] = audio_coding['second'].max()
-                upload(metadata, 'ramsey', 'metadata', username, password)
-            
-            with st.spinner('Uploading Audio Data'):
-                upload(audio_coding, 'ramsey', 'audio', username, password)
-        
-        if verbose:
-            st.write('')
-            st.write('Audio Code')
-            st.dataframe(audio_coding, width=5000)
-        
-    return [metadata, audio_coding]
         
 ##############
 # Lags/Leads #
