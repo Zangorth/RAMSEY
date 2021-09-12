@@ -38,7 +38,7 @@ if begin:
     
     with st.spinner('Reading Data from SQL'):
         connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
-                             'Server=ZANGORTH\HOMEBASE;' + 
+                             'Server=ZANGORTH;' + 
                              'DATABASE=HomeBase;' +
                              'Trusted_Connection=yes;')
         con = sql.connect(connection_string)

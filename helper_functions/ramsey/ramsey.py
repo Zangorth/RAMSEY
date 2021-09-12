@@ -3,7 +3,6 @@ from sqlalchemy import create_engine
 from pydub import AudioSegment
 from datetime import datetime
 from pytube import YouTube
-import streamlit as st
 import pyodbc as sql
 import pandas as pd
 import numpy as np
@@ -40,7 +39,7 @@ class Scrape():
 
     def metadata(self):
         connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
-                             'Server=ZANGORTH\HOMEBASE;DATABASE=HomeBase;' +
+                             'Server=ZANGORTH;DATABASE=HomeBase;' +
                              'Trusted_Connection=yes;') 
         con = sql.connect(connection_string)
         query = 'SELECT * FROM [ramsey].[metadata]'
@@ -57,29 +56,33 @@ class Scrape():
             return 'Link already exists in database'
         
         self.personality = self.personalities[self.yt.channel_id]
-        self.i = collected.loc[collected['channel'] == self.personality, 'id'].max() + 1 if len(collected.loc[collected['channel'] == self.personality, 'id']) > 0 else 0
         
         name = self.yt.title
         name = name.translate(str.maketrans('', '', string.punctuation)).lower()
         self.name = name
         
         keywords = ('|'.join(self.yt.keywords)).replace("'", "''").lower()
+        self.publish_date = self.yt.publish_date.strftime("%Y-%m-%d")
+        self.random_id = int(round(np.random.uniform()*1000000, 0))
         
         if (datetime.now() - self.yt.publish_date).days < 7:
             return 'Videos are only recorded after having been published at least 7 days'
         
-        upload = pd.DataFrame({'channel': self.personality, 'id': [self.i],
-                               'title': [name], 'link': [self.link],
-                               'publish_date': [self.yt.publish_date.strftime("%Y/%m/%d")],
-                               'keywords': [keywords], 'seconds': [self.yt.length], 'rating': [self.yt.rating], 'view_count': [self.yt.views]})
+        out = pd.DataFrame({'channel': self.personality,
+                            'publish_date': [self.publish_date],
+                            'random_id': [self.random_id],
+                            'title': [name], 'link': [self.link],
+                            'keywords': [keywords], 'seconds': [self.yt.length], 
+                            'rating': [self.yt.rating], 'view_count': [self.yt.views],
+                            'upload_date': [datetime.now().strftime("%Y-%m-%d")]})
             
-        return upload
+        return out
         
     def audio(self):
         os.chdir(self.audio_location)
         self.yt.streams.filter(only_audio=True).first().download()
         current_name = [f for f in os.listdir() if '.mp4' in f][0]
-        self.file = f'{self.i} {self.personality}.mp3'
+        self.file = f'{self.personality} {str(self.publish_date)} {self.random_id}.mp3'
         
         try:
             os.rename(current_name, self.file)
@@ -95,7 +98,7 @@ class Scrape():
         
         try:
             transcript = YouTubeTranscriptApi.get_transcript(transcript_link)
-            pickle.dump(transcript, open(f'{self.transcript_location}\\{self.i} {self.personality}.pkl', 'wb'))
+            pickle.dump(transcript, open(f'{self.transcript_location}\\{self.file.replace(".mp3", ".pkl")}', 'wb'))
         except NoTranscriptFound:
             pass
         except Exception:
@@ -126,21 +129,21 @@ class Scrape():
             
             features = list(mfccs) + list(chroma) + list(mel) + list(contrast) + list(tonnetz)
             features = [float(f) for f in features]
-            features = [self.personality, self.i, second] + features
+            features = [self.personality, self.publish_date, self.random_id, second] + features
             
             features = pd.DataFrame([features], columns=self.columns)
             
         except ValueError:
             features = pd.DataFrame(columns=self.columns, index=[0])
-            features.iloc[0, 0:2] = [self.personality, self.i, second]
+            features.iloc[0, 0:3] = [self.personality, self.publish_date, self.random_id, second]
             
         except ParameterError:
             features = pd.DataFrame(columns=self.columns, index=[0])
-            features.iloc[0, 0:2] = [self.personality, self.i, second]
+            features.iloc[0, 0:3] = [self.personality, self.publish_date, self.random_id, second]
         
         except Exception:
             features = pd.DataFrame(columns=self.columns, index=[0])
-            features.iloc[0, 0:2] = [self.personality, self.i, second]
+            features.iloc[0, 0:3] = [self.personality, self.publish_date, self.random_id, second]
         
         return features
 
@@ -150,7 +153,7 @@ class Scrape():
 def upload(dataframe, schema, table, exists='append'):
     conn_str = (
             r'Driver={ODBC Driver 17 for SQL Server};'
-            r'Server=ZANGORTH\HOMEBASE;'
+            r'Server=ZANGORTH;'
             r'Database=HomeBase;'
             'Trusted_Connection=yes;'
         )

@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import warnings
 import librosa
-import ray # ray requires scipy 1.6.3 to work
+import ray
 
 ###################
 # Define Function #
@@ -14,10 +14,11 @@ import ray # ray requires scipy 1.6.3 to work
 def encode_audio(sound):
     warnings.filterwarnings('ignore')
     
-    speaker = sound[0]
-    index = sound[1]
-    second = sound[2]
-    sound = sound[3]
+    channel = sound[0]
+    publish_date = sound[1]
+    random_id = sound[2]
+    second = sound[3]
+    sound = sound[4]
     
     try:
         y, rate = librosa.load(sound.export(format='wav'), res_type='kaiser_fast')
@@ -30,17 +31,13 @@ def encode_audio(sound):
         
         features = list(mfccs) + list(chroma) + list(mel) + list(contrast) + list(tonnetz)
         features = [float(f) for f in features]
-        features = [speaker, index, second] + features
+        features = [channel, publish_date, random_id, second] + features
         
         features = pd.DataFrame([features])
-        
-    except ValueError:
-        features = pd.DataFrame(index=[0])
-        features.iloc[0, 0:3] = [speaker, index, second]
     
     except Exception:
         features = pd.DataFrame(index=[0])
-        features.iloc[0, 0:3] = [speaker, index, second]
+        features.iloc[0, 0:3] = [channel, publish_date, random_id, second]
     
     return features
 
@@ -48,9 +45,7 @@ def encode_audio(sound):
 ###############
 # Scrape Data #
 ###############
-personality = 'coleman'
-username = 'zangorth'
-password = open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\password.txt', 'r').read()
+personality = 'ao'
 
 personalities = {'ramsey': 'https://www.youtube.com/watch?v=0JUw1agDjoA&list=UU7eBNeDW1GQf2NJQ6G6gAxw&index=2',
                  'deloney': 'https://www.youtube.com/watch?v=_wWc1Tc19qA&list=UU4HiMKM8WLcNbt9ae_XNRNQ&index=2',
@@ -67,7 +62,7 @@ videos = Playlist(personalities[personality]).video_urls
 videos = list(videos)
 
 connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
-                     'Server=ZANGORTH\HOMEBASE;DATABASE=HomeBase;' +
+                     'Server=ZANGORTH;DATABASE=HomeBase;' +
                      'Trusted_Connection=yes;')
 con = sql.connect(connection_string)
 query = 'SELECT * FROM ramsey.metadata'
@@ -95,7 +90,7 @@ for video_link in videos:
     
     if type(metadata) != str:
         iterables = new.iterables()
-        iterables = [[personality, metadata.id.item(), sound[0], sound[1]] for sound in iterables]
+        iterables = [[personality, metadata.publish_date.item(), metadata.random_id.item(), sound[0], sound[1]] for sound in iterables]
         
         audio_coding = ray.get([encode_audio.remote(sound) for sound in iterables])
         audio_coding = pd.concat(audio_coding)

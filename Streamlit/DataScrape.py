@@ -74,7 +74,7 @@ if run:
         videos = list(videos)
         
         connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
-                             'Server=ZANGORTH\HOMEBASE;DATABASE=HomeBase;' +
+                             'Server=ZANGORTH;DATABASE=HomeBase;' +
                              'Trusted_Connection=yes;')
         con = sql.connect(connection_string)
         query = 'SELECT * FROM ramsey.metadata'

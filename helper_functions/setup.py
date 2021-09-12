@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
       name='zangorth-ramsey',
-      version='1.1.0',
+      version='1.1.5',
       description='Helper Functions for Ramsey Project',
       author='Zangorth',
       packages=['ramsey'],
