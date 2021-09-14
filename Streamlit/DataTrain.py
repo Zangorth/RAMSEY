@@ -6,6 +6,7 @@ import pyodbc as sql
 import pandas as pd
 
 personalities = ['Ramsey', 'Deloney', 'Coleman', 'AO', 'Cruze', 'Wright', 'Kamel']
+personality_choices = personalities + ['Hogan', 'Guest', 'None']
 api = 'AIzaSyAftHJhz8-5UUOACb46YBLchKL78yrXpbw'
 
 st.title('The Ramsey Highlights')
@@ -43,12 +44,14 @@ if begin:
                              'Trusted_Connection=yes;')
         con = sql.connect(connection_string)
         collected = pd.read_sql(query, con)
-        trained = pd.read_sql('SELECT * FROM ramsey.training', con)
+        trained = pd.read_sql('SELECT * FROM ramsey.train', con)
+        st.session_state['speaker'] = pd.read_sql('SELECT * FROM ramsey.speaker', con)
+        st.session_state['gender'] = pd.read_sql('SELECT * FROM ramsey.gender', con)
         con.close()
         
         collected = collected.loc[collected.index.repeat(collected.seconds)]
-        collected['second'] = collected.groupby(['channel', 'id']).cumcount()
-        collected = collected.merge(trained[['channel', 'id', 'second', 'speaker', 'gender']], how='left')
+        collected['second'] = collected.groupby(['channel', 'publish_date', 'random_id']).cumcount()
+        collected = collected.merge(trained, how='left', on=['channel', 'publish_date', 'random_id', 'second'])
         collected = collected.loc[(collected['speaker'].isnull()) | (collected['gender'].isnull())]
         collected = collected.sample(frac=1).reset_index(drop=True)
         
@@ -62,17 +65,18 @@ if begin:
         st.session_state['restrict_key'] = 'all' if keywords == 'No' else 'hogan'
         
 
-if 'panda' in st.session_state:
+if 'panda' in st.session_state and 'complete' not in st.session_state:
     i = st.session_state['i']
     
     personality = st.session_state['panda']['channel'][i]
-    sample = st.session_state['panda']['id'][i]
+    publish_date = st.session_state['panda']['publish_date'][i]
+    sample = st.session_state['panda']['random_id'][i]
     second = st.session_state['panda']['second'][i]
     video_link = st.session_state['panda']['link'][i].split('v=')[-1]
     
     if st.session_state['sound'] == '':
         with st.spinner('Reading Audio File'):
-            sound_byte = f'C:\\Users\\Samuel\\Google Drive\\Portfolio\\Ramsey\\Audio\\Audio Full\\{personality}\\{sample} {personality}.mp3'
+            sound_byte = f'C:\\Users\\Samuel\\Google Drive\\Portfolio\\Ramsey\\Audio\\Audio Full\\{personality}\\{personality} {publish_date} {sample}.mp3'
                 
             st.session_state['sound'] = AudioSegment.from_file(sound_byte)
         
@@ -107,14 +111,15 @@ if 'panda' in st.session_state:
     upload_form = st.form('upload', clear_on_submit=True)
     left, middle, right = upload_form.columns(3)
     
-    speaker_upload = left.radio('Speaker', personalities + ['Hogan', 'Guest', 'None'])
+    speaker_upload = left.radio('Speaker', personality_choices)
     gender_upload = middle.radio('Gender', ['Man', 'Woman', 'None'])
     slce = f'{st.session_state["restrict_channel"]}-{st.session_state["restrict_year"]}-{st.session_state["restrict_key"]}'        
     
     send = upload_form.form_submit_button()
         
     if send:
-        new = pd.DataFrame({'channel': [personality], 'id': [sample], 'second': [second],
+        new = pd.DataFrame({'channel': [personality], 'publish_date': [publish_date], 
+                            'random_id': [sample], 'second': [second],
                             'speaker': [speaker_upload], 'gender': [gender_upload],
                             'slice': [slce.replace("'", "")]})
         
@@ -128,4 +133,9 @@ if 'panda' in st.session_state:
     if st.session_state['i'] > 0:
         homebase = st.button('SQL UPLOAD')
         
-        upload(st.session_state['trained'], 'ramsey', 'training')
+        if homebase:
+            upload(st.session_state['trained'], 'ramsey', 'train')
+            st.session_state['complete'] = True
+            
+if 'complete' in st.session_state:
+    st.subheader('Data Successfully Uploaded')
