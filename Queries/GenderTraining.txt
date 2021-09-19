@@ -1,52 +1,57 @@
 SET NOCOUNT ON
 
-SELECT channel, id, [second]
+SELECT channel, publish_date, random_id, [second]
 INTO #gender
-FROM ramsey.training
+FROM ramsey.train
 UNION
-SELECT channel, id, [second]-1
-FROM ramsey.training
+SELECT channel, publish_date, random_id, [second]-1
+FROM ramsey.train
 UNION
-SELECT channel, id, [second]-2
-FROM ramsey.training
+SELECT channel, publish_date, random_id, [second]-2
+FROM ramsey.train
 UNION
-SELECT channel, id, [second]-3
-FROM ramsey.training
+SELECT channel, publish_date, random_id, [second]-3
+FROM ramsey.train
 UNION
-SELECT channel, id, [second]-4
-FROM ramsey.training
+SELECT channel, publish_date, random_id, [second]-4
+FROM ramsey.train
 UNION
-SELECT channel, id, [second]-5
-FROM ramsey.training
+SELECT channel, publish_date, random_id, [second]-5
+FROM ramsey.train
 UNION
-SELECT channel, id, [second]+1
-FROM ramsey.training
+SELECT channel, publish_date, random_id, [second]+1
+FROM ramsey.train
 UNION
-SELECT channel, id, [second]+2
-FROM ramsey.training
+SELECT channel, publish_date, random_id, [second]+2
+FROM ramsey.train
 UNION
-SELECT channel, id, [second]+3
-FROM ramsey.training
+SELECT channel, publish_date, random_id, [second]+3
+FROM ramsey.train
 UNION
-SELECT channel, id, [second]+4
-FROM ramsey.training
+SELECT channel, publish_date, random_id, [second]+4
+FROM ramsey.train
 UNION
-SELECT channel, id, [second]+5
-FROM ramsey.training
+SELECT channel, publish_date, random_id, [second]+5
+FROM ramsey.train
 
 
-SELECT gender, DATEDIFF(MONTH, publish_date, GETDATE()) AS 'age', audio.*
+SELECT slice, gender, 
+    DATEDIFF(MONTH, metadata.publish_date, GETDATE()) AS 'age', 
+    audio.*
 FROM #gender
-LEFT JOIN ramsey.training AS train
+LEFT JOIN ramsey.train AS train
     ON #gender.channel = train.channel
-    AND #gender.id = train.id
+    AND #gender.publish_date = train.publish_date
+	AND #gender.random_id = train.random_id
     AND #gender.[second] = train.[second]
 LEFT JOIN ramsey.audio
     ON #gender.channel = audio.channel
-    AND #gender.id = audio.id
+    AND #gender.publish_date = audio.publish_date
+	AND #gender.random_id = audio.random_id
     AND #gender.[second] = audio.[second]
 LEFT JOIN ramsey.metadata
     ON #gender.channel = metadata.channel
-    AND #gender.id = metadata.id
-WHERE audio.id IS NOT NULL
-ORDER BY audio.channel, audio.id, audio.[second]
+    AND #gender.publish_date = metadata.publish_date
+	AND #gender.random_id = metadata.random_id
+WHERE audio.random_id IS NOT NULL
+ORDER BY audio.channel, audio.publish_date, audio.random_id, audio.[second]

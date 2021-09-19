@@ -29,6 +29,8 @@ key_filter = "AND keywords LIKE '%hogan%'" if keywords == 'Yes' else ''
 
 begin = st.sidebar.button('BEGIN TRAINING')
 
+st.session_state['complete'] = False if 'complete' not in st.session_state else st.session_state['complete']
+
 if begin:
     query = f'''
     SELECT * 
@@ -63,9 +65,10 @@ if begin:
         st.session_state['restrict_year'] = 'all' if year_filter == 'YEAR(publish_date) IS NOT NULL' else f'{equality}{year}'
         st.session_state['restrict_channel'] = 'all' if len(channel) == 7 else '|'.join(channel)
         st.session_state['restrict_key'] = 'all' if keywords == 'No' else 'hogan'
+        st.session_state['complete'] = False
         
 
-if 'panda' in st.session_state and 'complete' not in st.session_state:
+if 'panda' in st.session_state and not st.session_state['complete']:
     i = st.session_state['i']
     
     personality = st.session_state['panda']['channel'][i]
@@ -91,7 +94,7 @@ if 'panda' in st.session_state and 'complete' not in st.session_state:
         lead = sound[second*1000-3000: second*1000+3000]
         sound = sound[second*1000:second*1000+1000]
     
-    st.subheader(f'Iteration {i}: {personality} {sample} - Second {second}')
+    st.subheader(f'Iteration {i}: {personality} {publish_date} - Second {second}')
     
     left, middle, right = st.columns(3)
     
@@ -136,6 +139,7 @@ if 'panda' in st.session_state and 'complete' not in st.session_state:
         if homebase:
             upload(st.session_state['trained'], 'ramsey', 'train')
             st.session_state['complete'] = True
+            st.experimental_rerun()
             
-if 'complete' in st.session_state:
+if st.session_state['complete']:
     st.subheader('Data Successfully Uploaded')

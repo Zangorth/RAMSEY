@@ -1,9 +1,8 @@
+from sklearn.model_selection import train_test_split as split
 from sklearn.linear_model import LogisticRegression
 from sklearn.exceptions import ConvergenceWarning
-from pure_sklearn.map import convert_estimator
 from helpers.cross_validation import CV
 from sklearn.decomposition import PCA
-from sqlalchemy import create_engine
 from sklearn.metrics import f1_score
 from sklearn.cluster import KMeans
 from sklearn import preprocessing
@@ -14,7 +13,6 @@ import pyodbc as sql
 import pandas as pd
 import numpy as np
 import warnings
-import urllib
 import pickle
 import skopt
 import torch
@@ -34,7 +32,7 @@ password = open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\password.txt', '
 #############
 if local:
     connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
-                         'Server=ZANGORTH\HOMEBASE;DATABASE=HomeBase;' +
+                         'Server=ZANGORTH;DATABASE=HomeBase;' +
                          'Trusted_Connection=yes;')
 else:
     connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
@@ -45,41 +43,74 @@ query = open('Queries\\GenderTraining.txt').read()
 panda = pd.read_sql(query, con)
 con.close()
 
-
 ##############
 # Clean Data #
 ##############
 panda['y'] = panda['gender'].astype('category').cat.codes
 y = panda['y']
+slices = panda['slice']
 
 mapped = panda[['y', 'gender']].drop_duplicates().reset_index(drop=True)
 mapped = mapped.loc[mapped.y != -1].sort_values('y').reset_index(drop=True)
 
-x = panda.drop(['channel', 'id', 'second', 'gender', 'y'], axis=1)
-save_cols = x.columns
+x = panda.drop(['channel', 'publish_date', 'random_id', 'second', 'gender', 'y', 'slice'], axis=1)
 
 scaler = preprocessing.StandardScaler().fit(x)
-x = pd.DataFrame(scaler.transform(x), columns=save_cols)
+pickle.dump(scaler, open('Pickles/gender_scaler.pkl', 'wb'))
+x = pd.DataFrame(scaler.transform(x), columns=x.columns)
 
-pca = PCA(4)
-pca = pca.fit(x)
+pca = PCA(4).fit(x)
+pickle.dump(pca, open('Pickles/gender_pca.pkl', 'wb'))
 x_pca = np.argmax(pca.transform(x), axis=1)
 
-km = KMeans(6)
-km = km.fit(x)
+km = KMeans(6).fit(x)
+pickle.dump(km, open('Pickles/gender_km.pkl', 'wb'))
 x_km = np.argmax(km.transform(x), axis=1)
 
-channels = pd.get_dummies(panda['channel'], prefix='channel')
+############
+# Pipeline #
+############
+def pipeline(dataframe, lags, leads, channels):
+    scaler = pickle.load(open('Pickles/gender_scaler.pkl', 'rb'))
+    pca = pickle.load(open('Pickles/gender_pca.pkl', 'rb'))
+    km = pickle.load(open('Pickles/gender_km.pkl', 'rb'))
+    
+    x = dataframe.drop(['channel', 'publish_date', 'random_id', 'second'], axis=1)
+    
+    x = pd.DataFrame(scaler.transform(x), columns=x.columns)
+    x_pca = np.argmax(pca.transform(x), axis=1)
+    x_km = np.argmax(km.transform(x), axis=1)
+    
+    x = dataframe[['channel', 'publish_date', 'random_id']].merge(x, how='left', left_index=True, right_index=True)
+    
+    x = ramsey.shift(x, group=['channel', 'publish_date', 'random_id'], lags=lags, leads=leads)
+        
+    for channel in channels:
+        x[f'channel_{channel}'] = np.where(x['channel'] == channel, 1, 0)
+    
+    x['pca'] = x_pca
+    x['km'] = x_km    
+    
+    return x
 
-x = panda[['channel', 'id']].merge(x, left_index=True, right_index=True)
-x = x.merge(channels, how='left', left_index=True, right_index=True)
-
-x['pca'] = x_pca
-x['km'] = x_km
+###################
+# Custom Splitter #
+###################
+def ramsey_split(x, y, slices):
+    ramsey_x = x.loc[slices == 'ramsey-all-all']
+    ramsey_y = y.loc[ramsey_x.index]
+    
+    x_train, x_test, y_train, y_test = split(ramsey_x, ramsey_y, test_size=0.05, stratify=ramsey_y)
+    x_train = x.loc[~x.index.isin(x_test.index)]
+    y_train = y.loc[~y.index.isin(x_test.index)]
+    
+    return [x_train, x_test, y_train, y_test]
 
 ####################
 # Optimize Network #
 ####################
+x = panda.drop(['gender', 'y', 'slice'], axis=1)
+
 starts, calls = 20, 100
 kwargs_out = None
 
@@ -102,8 +133,8 @@ space = space + [skopt.space.Integer(2**2, 2**10, name=f'neuron_{i}') for i in r
 i = 0
 @skopt.utils.use_named_args(space)
 def net(model, lags, leads, km, pca, over=False, **kwargs):
-    lx = ramsey.shift(x, ['channel', 'id'], lags, leads)
-    lx = lx.loc[y != -1].drop(['channel', 'id'], axis=1).dropna()
+    lx = pipeline(x, lags, leads, set(x['channel']))
+    lx = lx.loc[y != -1].drop(['channel', 'publish_date', 'random_id'], axis=1).dropna()
     ly = y.loc[lx.index]
     
     lx, ly = lx.reset_index(drop=True), ly.reset_index(drop=True)
@@ -122,9 +153,10 @@ def net(model, lags, leads, km, pca, over=False, **kwargs):
         
     elif model == 'logit':
         discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
-    
+        
     f1 = partial(f1_score, average='macro')
-    validator = CV(discriminator, f1, lower_bound=True)
+    splitter = partial(split, test_size=0.15, stratify=ly)
+    validator = CV(discriminator, f1, splitter, lower_bound=True)
     out = validator.cv(lx, ly, over=True)
     
     global i
@@ -153,16 +185,17 @@ if optimize:
     
     print(results)
     
-    pickle.dump(results, open('gender_results.pkl', 'wb'))
+    pickle.dump(results, open('Pickles/gender_results.pkl', 'wb'))
 else:
-    results = pickle.load(open('gender_results.pkl', 'rb'))
+    results = pickle.load(open('Pickles/gender_results.pkl', 'rb'))
     
 ####################
 # Validate Network #
 ####################
-x = ramsey.shift(x, ['channel', 'id'], results['lags'], results['leads'])
-x = x.loc[y != -1].drop(['channel', 'id'], axis=1).dropna()
+x = pipeline(x, results['lags'], results['leads'], set(panda['channel']))
+x = x.loc[y != -1].drop(['channel', 'publish_date', 'random_id'], axis=1).dropna()
 y = y.loc[x.index]
+slices = slices.loc[x.index]
 
 if results['pca'] == 0:
     x = x.drop('pca', axis=1)
@@ -170,7 +203,7 @@ if results['pca'] == 0:
 if results['km'] == 0:
     x = x.drop('km', axis=1)
 
-x, y = x.reset_index(drop=True), y.reset_index(drop=True)
+x, y, slices = x.reset_index(drop=True), y.reset_index(drop=True), slices.reset_index(drop=True)
 
 if results['model'] == 'nn':
     discriminator = arbitraryNN.Discriminator(drop=results['drop'], neurons=results['neurons'], lr_nn=results['lr_nn'],
@@ -180,11 +213,12 @@ elif results['model'] == 'logit':
     discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
 
 f1 = partial(f1_score, average=None)
-validator = CV(discriminator, f1)
+splitter = partial(ramsey_split, slices=slices)
+validator = CV(discriminator, f1, splitter)
 avg = pd.DataFrame(validator.cv(x, y, over=True, full=True), columns=mapped['gender'])
 
 f1 = partial(f1_score, average='macro')
-validator = CV(discriminator, f1)
+validator = CV(discriminator, f1, splitter)
 
 print(f'F1 Macro: {validator.cv(x, y, cv=100, over=True)}\n')
 print(avg.mean())
@@ -203,116 +237,39 @@ discriminator.fit(x, y)
 
 if local:
     connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
-                         'Server=ZANGORTH\HOMEBASE;DATABASE=HomeBase;' +
+                         'Server=ZANGORTH;DATABASE=HomeBase;' +
                          'Trusted_Connection=yes;')
 else:
     connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
                          'Server=zangorth.database.windows.net;DATABASE=HomeBase;' +
                          f'UID={username};PWD={password};')
 con = sql.connect(connection_string)
-query = '''SELECT channel, id FROM ramsey.metadata'''
+query = '''SELECT channel, publish_date, random_id FROM ramsey.metadata'''
 iterations = pd.read_sql(query, con)
 
 for i in range(len(iterations)):
+    print(f'{i}/{len(iterations)}')
     query = f'''
-    SELECT DATEDIFF(MONTH, publish_date, GETDATE()) AS 'age', audio.*
+    SELECT DATEDIFF(MONTH, metadata.publish_date, GETDATE()) AS 'age', audio.*
     FROM ramsey.audio
     LEFT JOIN ramsey.metadata
         ON audio.channel = metadata.channel
-        AND audio.id = metadata.id
-    WHERE audio.channel = '{iterations['channel'][i]}' AND audio.id = {iterations['id'][i]}
+        AND audio.publish_date = metadata.publish_date
+        AND audio.random_id = metadata.random_id
+    WHERE audio.channel = '{iterations['channel'][i]}' 
+        AND audio.publish_date = '{iterations['publish_date'][i]}'
+        AND audio.random_id = {iterations['random_id'][i]}
     '''
     
     data = pd.read_sql(query, con)
-    
-    data_x = data.drop(['channel', 'id', 'second'], axis=1)
-    save_cols = data_x.columns
-    
-    data_x = pd.DataFrame(scaler.transform(data_x), columns=save_cols)
-    
-    data_x_pca = np.argmax(pca.transform(data_x), axis=1)
-    data_x_km = np.argmax(km.transform(data_x), axis=1)
-    
-    data_x = data[['channel', 'id']].merge(data_x, left_index=True, right_index=True)
-    
-    for channel in channels.columns:
-        data_x[channel] = 1 if iterations['channel'][i] in channel else 0 
-    
-    data_x['pca'] = data_x_pca
-    data_x['km'] = data_x_km
-    
-    data_x = ramsey.shift(data_x, ['channel', 'id'], results['lags'], results['leads'])
-    data_x = data_x.drop(['channel', 'id'], axis=1).dropna()
+    data_x = pipeline(data, results['lags'], results['leads'], set(panda['channel']))
+    data_x = data_x.drop(['channel', 'publish_date', 'random_id'], axis=1).dropna()
     
     preds = pd.DataFrame({'y': discriminator.predict(data_x)}, index=data_x.index)
     preds = preds.merge(mapped, how='left', on='y').drop('y', axis=1)
     
-    new = data[['channel', 'id', 'second']].merge(preds, left_index=True, right_index=True)
+    new = data[['channel', 'publish_date', 'random_id', 'second']].merge(preds, left_index=True, right_index=True)
     
+    ramsey.upload(new, 'ramsey', 'gender')
     
-    
-    new = pd.DataFrame({'channel': iterations['channel'][i], ''
-                        
-                        discriminator.predict(data_x)
-    
-        
-        
-    
-    
-
-
-if results['model'] == 'logit':
-    discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
-    discriminator.fit(x, y)
-    
-    discriminator = convert_estimator(discriminator)
-    
-    preds = []
-    i = 0
-    while i <= len(audio):
-        print(f'{i}:{i+100000} / {len(audio)}')
-        
-        audio_x = audio.iloc[i:i+100000]
-        audio_x = RH.shift(audio_x, 'id', results['lags'], results['leads'])
-        audio_x = audio_x.dropna()
-        
-        audio_x['prediction'] = discriminator.predict(audio_x.drop([col for col in audio_x.columns if col not in x.columns], axis=1).values.tolist())
-        predictions = predictions.append(audio_x[['id', 'second', 'prediction']], ignore_index=True, sort=False)
-        
-        i += 100000
-        
-
-elif results['model'] == 'nn':
-    discriminator = arbitraryNN.Discriminator(drop=results['drop'], neurons=results['neurons'], lr_nn=results['lr_nn'],
-                                              epochs=results['epochs'], layers=results['layers'], batch_size=int(results['batch_size']))
-    
-    discriminator.fit(x, y)
-    
-    i = 0
-    while i <= len(audio):
-        print(f'{i}:{i+100000} / {len(audio)}')
-        
-        audio_x = audio.iloc[i:i+100000]
-        audio_x = RH.shift(audio_x, 'id', results['lags'], results['leads'])
-        audio_x = audio_x.dropna()
-        
-        audio_x['prediction'] = discriminator.predict(audio_x.drop([col for col in audio_x.columns if col not in x.columns], axis=1))
-        predictions = predictions.append(audio_x[['id', 'second', 'prediction']], ignore_index=True, sort=False)
-        
-        i+=100000
-    
-predictions = predictions.merge(mapped, how='left', left_on='prediction', right_on='y')[['id', 'second', 'gender']]
-predictions['id'] = predictions['id'].astype(int)
-predictions['second'] = predictions['second'].astype(int)
-    
-conn_str = (
-        r'Driver={SQL Server};'
-        r'Server=ZANGORTH\HOMEBASE;'
-        r'Database=RAMSEY;'
-        r'Trusted_Connection=yes;'
-    )
-con = urllib.parse.quote_plus(conn_str)
-
-engine = create_engine(f'mssql+pyodbc:///?odbc_connect={con}')
-
-predictions.to_sql(name='Gender', con=engine, schema='prediction', if_exists='replace', index=False)
+con.close()
