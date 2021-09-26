@@ -1,141 +1,110 @@
+from sklearn.model_selection import train_test_split as split
 from sklearn.linear_model import LogisticRegression
 from sklearn.exceptions import ConvergenceWarning
-from pure_sklearn.map import convert_estimator
+from helpers.cross_validation import CV
 from sklearn.decomposition import PCA
-from sqlalchemy import create_engine
-from matplotlib import pyplot as plt
 from sklearn.metrics import f1_score
 from sklearn.cluster import KMeans
 from sklearn import preprocessing
+from helpers import arbitraryNN
 from functools import partial
-from skopt import plots
+from ramsey import ramsey
 import pyodbc as sql
 import pandas as pd
 import numpy as np
 import warnings
-import urllib
 import pickle
 import skopt
 import torch
-import sys
 import os
 
 os.chdir(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey')
-sys.path.append(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey')
-sys.path.append(r'C:\Users\Samuel\Google Drive\Portfolio\Helpers')
-from cross_validation import CV
-import ramsey_helpers as RH
-import arbitraryNN
-
-full = False
-include_gender = True
-optimize = True
-
 warnings.filterwarnings('error', category=ConvergenceWarning)
 warnings.filterwarnings(action='ignore', category=UserWarning)
 device = torch.device('cuda:0')
 
+local, optimize = True, True
+model = 'gender'
+
 #############
 # Read Data #
 #############
-# Training Audio
-con = sql.connect('''DRIVER={ODBC Driver 17 for SQL Server};
-                  Server=ZANGORTH\HOMEBASE; DATABASE=RAMSEY; 
-                  Trusted_Connection=yes;''')
-                  
-query = open('Queries\\SpeakerTraining.txt').read()
-
-train_audio = pd.read_sql(query, con)
-
-if full:
-    query = open('Queries\\FullAudio.txt').read()
-    audio = pd.read_sql(query, con)
-    audio = audio.dropna().reset_index(drop=True)
-    
-if include_gender:
-    query = 'SELECT id, [second], gender FROM RAMSEY.prediction.Gender'
-    gender = pd.read_sql(query, con)
-    gender = gender.merge(pd.get_dummies(gender['gender']), left_index=True, right_index=True, how='left')
-    gender = gender.drop('gender', axis=1)
-    
-
+connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
+                     'Server=ZANGORTH;DATABASE=HomeBase;' +
+                     'Trusted_Connection=yes;')
+con = sql.connect(connection_string)
+query = open('Queries\\training_initial.txt').read().format(model)
+panda = pd.read_sql(query, con)
 con.close()
 
 ##############
 # Clean Data #
 ##############
-train_audio['y'] = train_audio['speaker'].astype('category').cat.codes
-y = train_audio['y']
+panda['y'] = panda[model].astype('category').cat.codes
+y = panda['y']
+slices = panda['slice']
 
-train_audio = train_audio.drop('source', axis=1)
-
-mapped = train_audio[['y', 'speaker']].drop_duplicates().reset_index(drop=True)
+mapped = panda[['y', model]].drop_duplicates().reset_index(drop=True)
 mapped = mapped.loc[mapped.y != -1].sort_values('y').reset_index(drop=True)
 
-years = pd.get_dummies(train_audio['publish_year'])
-years.columns = [str(col) for col in years.columns]
-
-days = pd.get_dummies(train_audio['dow'])
-interaction = pd.get_dummies(train_audio['interaction'])
-
-exclude = list(years.columns) + list(days.columns) + list(interaction.columns)
-
-x = train_audio.drop(['id', 'second', 'speaker', 'y', 'publish_year', 'dow', 'interaction'], axis=1)
-save_cols = x.columns
+x = panda.drop(['channel', 'publish_date', 'random_id', 'second', model, 'y', 'slice'], axis=1)
 
 scaler = preprocessing.StandardScaler().fit(x)
-x = pd.DataFrame(scaler.transform(x), columns=save_cols)
+pickle.dump(scaler, open('Pickles/scaler.pkl', 'wb'))
+x = pd.DataFrame(scaler.transform(x), columns=x.columns)
 
-pca = PCA(4)
-pca = np.argmax(pca.fit_transform(x), axis=1)
+pca = PCA(4).fit(x)
+pickle.dump(pca, open('Pickles/pca.pkl', 'wb'))
+x_pca = np.argmax(pca.transform(x), axis=1)
 
-km = KMeans(6)
-km = np.argmax(km.fit_transform(x), axis=1)
+km = KMeans(6).fit(x)
+pickle.dump(km, open('Pickles/km.pkl', 'wb'))
+x_km = np.argmax(km.transform(x), axis=1)
 
-x = train_audio[['id', 'second']].merge(x, left_index=True, right_index=True)
-x = x.merge(years, left_index=True, right_index=True)
-x = x.merge(days, left_index=True, right_index=True)
-x = x.merge(interaction, left_index=True, right_index=True)
-x['pca'] = pca
-x['km'] = km
+############
+# Pipeline #
+############
+def pipeline(dataframe, lags, leads, channels):
+    scaler = pickle.load(open('Pickles/scaler.pkl', 'rb'))
+    pca = pickle.load(open('Pickles/pca.pkl', 'rb'))
+    km = pickle.load(open('Pickles/km.pkl', 'rb'))
+    
+    x = dataframe.drop(['channel', 'publish_date', 'random_id', 'second'], axis=1)
+    
+    x = pd.DataFrame(scaler.transform(x), columns=x.columns)
+    x_pca = np.argmax(pca.transform(x), axis=1)
+    x_km = np.argmax(km.transform(x), axis=1)
+    
+    x = dataframe[['channel', 'publish_date', 'random_id']].merge(x, how='left', left_index=True, right_index=True)
+    
+    x = ramsey.shift(x, group=['channel', 'publish_date', 'random_id'], lags=lags, leads=leads)
+        
+    for channel in channels:
+        x[f'channel_{channel}'] = np.where(x['channel'] == channel, 1, 0)
+    
+    x['pca'] = x_pca
+    x['km'] = x_km    
+    
+    return x
 
-if include_gender:
-    x = x.merge(gender, on=['id', 'second'], how='left')
-
-if full:
-    transform = audio.drop(['id', 'second', 'publish_year', 'dow', 'interaction'], axis=1)
-    save_cols = transform.columns
+###################
+# Custom Splitter #
+###################
+def ramsey_split(x, y, slices):
+    ramsey_x = x.loc[slices == 'ramsey-all-all']
+    ramsey_y = y.loc[ramsey_x.index]
     
-    transform = pd.DataFrame(scaler.transform(transform), columns=save_cols)
+    x_train, x_test, y_train, y_test = split(ramsey_x, ramsey_y, test_size=0.05, stratify=ramsey_y)
+    x_train = x.loc[~x.index.isin(x_test.index)]
+    y_train = y.loc[~y.index.isin(x_test.index)]
     
-    pca = PCA(4)
-    pca = np.argmax(pca.fit_transform(transform), axis=1)
-    
-    km = KMeans(6)
-    km = np.argmax(km.fit_transform(transform), axis=1)
-    
-    years = pd.get_dummies(audio['publish_year'])
-    years.columns = [str(col) for col in years.columns]
-    
-    days = pd.get_dummies(audio['dow'])
-    interaction = pd.get_dummies(audio['interaction'])
-    
-    audio = audio[['id', 'second']].merge(transform, right_index=True, left_index=True)
-    audio = audio.merge(years, right_index=True, left_index=True)
-    audio = audio.merge(days, right_index=True, left_index=True)
-    audio = audio.merge(interaction, right_index=True, left_index=True)
-    
-    audio['pca'] = pca
-    audio['km'] = km
-    
-    if include_gender:
-        audio = audio.merge(gender, on=['id', 'second'], how='left')
-    
-    audio = audio.dropna().reset_index(drop=True)
+    return [x_train, x_test, y_train, y_test]
 
 ####################
 # Optimize Network #
 ####################
+x = panda.drop([model, 'y', 'slice'], axis=1)
+
 starts, calls = 20, 100
 kwargs_out = None
 
@@ -146,7 +115,6 @@ space = [
     skopt.space.Integer(0, max_shift, name='leads'),
     skopt.space.Integer(0, 1, name='pca'),
     skopt.space.Integer(0, 1, name='km'),
-    skopt.space.Integer(0, 1, name='gender'),
     skopt.space.Integer(1, 5, name='layers'),
     skopt.space.Integer(1, 100, name='epochs'),
     skopt.space.Real(0.0001, 0.2, name='drop', prior='log-uniform'),
@@ -158,9 +126,9 @@ space = space + [skopt.space.Integer(2**2, 2**10, name=f'neuron_{i}') for i in r
 
 i = 0
 @skopt.utils.use_named_args(space)
-def net(model, lags, leads, km, pca, gender, over=False, **kwargs):
-    lx = RH.shift(x, 'id', lags, leads)
-    lx = lx.loc[y != -1].drop('id', axis=1).dropna()
+def net(model, lags, leads, km, pca, over=False, **kwargs):
+    lx = pipeline(x, lags, leads, set(x['channel']))
+    lx = lx.loc[y != -1].drop(['channel', 'publish_date', 'random_id'], axis=1).dropna()
     ly = y.loc[lx.index]
     
     lx, ly = lx.reset_index(drop=True), ly.reset_index(drop=True)
@@ -170,9 +138,6 @@ def net(model, lags, leads, km, pca, gender, over=False, **kwargs):
         
     if not km:
         lx = lx.drop('km', axis=1)
-        
-    if include_gender and not gender:
-        lx = lx.drop(['M', 'N', 'W'], axis=1)
     
     neurons = None if 'neuron_0' not in kwargs else [kwargs[key] for key in kwargs if 'neuron' in key]
     
@@ -182,9 +147,10 @@ def net(model, lags, leads, km, pca, gender, over=False, **kwargs):
         
     elif model == 'logit':
         discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
-    
+        
     f1 = partial(f1_score, average='macro')
-    validator = CV(discriminator, f1)
+    splitter = partial(split, test_size=0.15, stratify=ly)
+    validator = CV(discriminator, f1, splitter, lower_bound=True)
     out = validator.cv(lx, ly, over=True)
     
     global i
@@ -199,16 +165,12 @@ def net(model, lags, leads, km, pca, gender, over=False, **kwargs):
 if optimize:
     result = skopt.forest_minimize(net, space, acq_func='PI', n_initial_points=starts, n_calls=calls)
     
-    plt.figure(figsize=(50, 50))
-    plots.plot_evaluations(result)
-    plt.savefig('SpeakerResults.png', bbox_inches='tight')
-    
     print(f'Max F1: {result.fun}')
     
     results = {'model': result.x[0], 'lags': result.x[1], 'leads': result.x[2], 
-               'pca': result.x[3], 'km': result.x[4], 'gender': result.x[5]}
+               'pca': result.x[3], 'km': result.x[4]}
     
-    i = 6
+    i = 5
     for key in kwargs_out:
         results[key] = result.x[i]
         i += 1
@@ -217,28 +179,25 @@ if optimize:
     
     print(results)
     
-    pickle.dump(results, open('speaker_results.pkl', 'wb'))
+    pickle.dump(results, open('Pickles/speaker_results.pkl', 'wb'))
 else:
-    results = pickle.load(open('speaker_results.pkl', 'rb'))
-
-
+    results = pickle.load(open('Pickles/speaker_results.pkl', 'rb'))
+    
 ####################
 # Validate Network #
 ####################
-x = RH.shift(x, 'id', results['lags'], results['leads'], exclude=exclude)
-x = x.loc[y != -1].drop('id', axis=1).dropna()
+x = pipeline(x, results['lags'], results['leads'], set(panda['channel']))
+x = x.loc[y != -1].drop(['channel', 'publish_date', 'random_id'], axis=1).dropna()
 y = y.loc[x.index]
+slices = slices.loc[x.index]
 
 if results['pca'] == 0:
     x = x.drop('pca', axis=1)
     
 if results['km'] == 0:
     x = x.drop('km', axis=1)
-    
-if include_gender and results['gender'] == 0:
-    x = x.drop(['M', 'N', 'W'], axis=1)
 
-x, y = x.reset_index(drop=True), y.reset_index(drop=True)
+x, y, slices = x.reset_index(drop=True), y.reset_index(drop=True), slices.reset_index(drop=True)
 
 if results['model'] == 'nn':
     discriminator = arbitraryNN.Discriminator(drop=results['drop'], neurons=results['neurons'], lr_nn=results['lr_nn'],
@@ -248,73 +207,64 @@ elif results['model'] == 'logit':
     discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
 
 f1 = partial(f1_score, average=None)
-validator = CV(discriminator, f1)
-avg = pd.DataFrame(validator.cv(x, y, over=True, full=True), columns=mapped['gender'])
+splitter = partial(split, test_size=0.15, stratify=y)
+validator = CV(discriminator, f1, splitter)
+avg = pd.DataFrame(validator.cv(x, y, over=True, full=True), columns=mapped[model])
 
 f1 = partial(f1_score, average='macro')
-validator = CV(discriminator, f1)
+splitter = partial(ramsey_split, slices=slices)
+validator = CV(discriminator, f1, splitter)
 
-print(f'F1 Macro: {validator.cv(x, y, over=True)}\n')
+print(f'F1 Macro: {validator.cv(x, y, cv=100, over=True)}\n')
 print(avg.mean())
 
 ###############
 # Predictions #
 ###############
-predictions = pd.DataFrame(columns=['id', 'second', 'rediction'])
-
-if results['model'] == 'logit':
-    discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
-    discriminator.fit(x, y)
-    
-    discriminator = convert_estimator(discriminator)
-    
-    preds = []
-    i = 0
-    while i <= len(audio):
-        print(f'{i}:{i+100000} / {len(audio)}')
-        
-        audio_x = audio.iloc[i:i+100000]
-        audio_x = RH.shift(audio_x, 'id', results['lags'], results['leads'], exclude=['second'] + exclude + ['2014-Saturday'])
-        audio_x = audio_x.dropna()
-        
-        audio_x['prediction'] = discriminator.predict(audio_x.drop([col for col in audio_x.columns if col not in x.columns], axis=1).values.tolist())
-        predictions = predictions.append(audio_x[['id', 'second', 'prediction']], ignore_index=True, sort=False)
-        
-        i += 100000
-        
-
-elif results['model'] == 'nn':
+if results['model'] == 'nn':
     discriminator = arbitraryNN.Discriminator(drop=results['drop'], neurons=results['neurons'], lr_nn=results['lr_nn'],
                                               epochs=results['epochs'], layers=results['layers'], batch_size=int(results['batch_size']))
     
-    discriminator.fit(x, y)
+elif results['model'] == 'logit':
+    discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
     
-    i = 0
-    while i <= len(audio):
-        print(f'{i}:{i+100000} / {len(audio)}')
-        
-        audio_x = audio.iloc[i:i+100000]
-        audio_x = RH.shift(audio_x, 'id', results['lags'], results['leads'], exclude=['second'] + exclude + ['2014-Saturday'])
-        audio_x = audio_x.dropna()
-        
-        audio_x['prediction'] = discriminator.predict(audio_x.drop([col for col in audio_x.columns if col not in x.columns], axis=1))
-        
-        predictions = predictions.append(audio_x[['id', 'second', 'prediction']], ignore_index=True, sort=False)
-        
-        i+=100000
-    
-predictions = predictions.merge(mapped, how='left', left_on='prediction', right_on='y')[['id', 'second', 'gender']]
-predictions['id'] = predictions['id'].astype(int)
-predictions['second'] = predictions['second'].astype(int)
-    
-conn_str = (
-        r'Driver={SQL Server};'
-        r'Server=ZANGORTH\HOMEBASE;'
-        r'Database=RAMSEY;'
-        r'Trusted_Connection=yes;'
-    )
-con = urllib.parse.quote_plus(conn_str)
+discriminator.fit(x, y)
 
-engine = create_engine(f'mssql+pyodbc:///?odbc_connect={con}')
+connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
+                     'Server=ZANGORTH;DATABASE=HomeBase;' +
+                     'Trusted_Connection=yes;')
+con = sql.connect(connection_string)
+query = '''SELECT channel, publish_date, random_id FROM ramsey.metadata'''
+iterations = pd.read_sql(query, con)
+first = True
 
-predictions.to_sql(name='Speaker', con=engine, schema='prediction', if_exists='replace', index=False)
+for i in range(len(iterations)):
+    print(f'{i}/{len(iterations)}')
+    query = f'''
+    SELECT DATEDIFF(MONTH, metadata.publish_date, GETDATE()) AS 'age', audio.*
+    FROM ramsey.audio
+    LEFT JOIN ramsey.metadata
+        ON audio.channel = metadata.channel
+        AND audio.publish_date = metadata.publish_date
+        AND audio.random_id = metadata.random_id
+    WHERE audio.channel = '{iterations['channel'][i]}' 
+        AND audio.publish_date = '{iterations['publish_date'][i]}'
+        AND audio.random_id = {iterations['random_id'][i]}
+    '''
+    
+    data = pd.read_sql(query, con)
+    data_x = pipeline(data, results['lags'], results['leads'], set(panda['channel']))
+    data_x = data_x.drop(['channel', 'publish_date', 'random_id'], axis=1).dropna()
+    
+    preds = pd.DataFrame({'y': discriminator.predict(data_x)}, index=data_x.index)
+    preds = preds.merge(mapped, how='left', on='y').drop('y', axis=1)
+    
+    new = data[['channel', 'publish_date', 'random_id', 'second']].merge(preds, left_index=True, right_index=True)
+    
+    if first:
+        ramsey.upload(new, 'ramsey', model, exists='replace')
+        first = False
+    else:
+        ramsey.upload(new, 'ramsey', model)
+    
+con.close()
