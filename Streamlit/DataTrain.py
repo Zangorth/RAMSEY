@@ -23,41 +23,35 @@ year = right_side.text_input('')
 
 keywords = st.sidebar.selectbox('Train Hogan?', ['No', 'Yes'])
 
-year_filter = 'YEAR(publish_date) IS NOT NULL' if year == '' else f'YEAR(publish_date) {equality} {year}'
+year_filter = 'YEAR(audio.publish_date) IS NOT NULL' if year == '' else f'YEAR(audio.publish_date) {equality} {year}'
 channel_filter = f'({", ".join(channel)})'
-key_filter = "AND keywords LIKE '%hogan%'" if keywords == 'Yes' else ''
+key_filter = "AND metadata.keywords LIKE '%hogan%'" if keywords == 'Yes' else ''
 
 begin = st.sidebar.button('BEGIN TRAINING')
 
 st.session_state['complete'] = False if 'complete' not in st.session_state else st.session_state['complete']
 
 if begin:
-    query = f'''
-    SELECT * 
-    FROM ramsey.metadata
-    WHERE channel IN {channel_filter}
-        AND {year_filter} {key_filter}
-    '''
-    
     with st.spinner('Reading Data from SQL'):
         connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
                              'Server=ZANGORTH;' + 
                              'DATABASE=HomeBase;' +
                              'Trusted_Connection=yes;')
         con = sql.connect(connection_string)
-        collected = pd.read_sql(query, con)
+        query = open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\Queries\Training.txt').read()
+        panda = pd.read_sql(query.format(channel_filter, year_filter, key_filter), con)
         trained = pd.read_sql('SELECT * FROM ramsey.train', con)
-        st.session_state['speaker'] = pd.read_sql('SELECT * FROM ramsey.speaker', con)
-        st.session_state['gender'] = pd.read_sql('SELECT * FROM ramsey.gender', con)
         con.close()
         
-        collected = collected.loc[collected.index.repeat(collected.seconds)]
-        collected['second'] = collected.groupby(['channel', 'publish_date', 'random_id']).cumcount()
-        collected = collected.merge(trained, how='left', on=['channel', 'publish_date', 'random_id', 'second'])
-        collected = collected.loc[(collected['speaker'].isnull()) | (collected['gender'].isnull())]
-        collected = collected.sample(frac=1).reset_index(drop=True)
+        panda.columns = ['channel', 'publish_date', 'random_id', 'second', 'speaker_pred', 'gender_pred', 'link']
+        panda['speaker_pred'] = panda['speaker_pred'].fillna('missing')
+        panda['gender_pred'] = panda['gender_pred'].fillna('missing')
         
-        st.session_state['panda'] = collected
+        panda = panda.merge(trained, how='left', on=['channel', 'publish_date', 'random_id', 'second'])
+        panda = panda.loc[(panda['speaker'].isnull()) | (panda['gender'].isnull())]
+        panda = panda.sample(frac=1).reset_index(drop=True)
+        
+        st.session_state['panda'] = panda
         st.session_state['trained'] = pd.DataFrame(columns=trained.columns)
         st.session_state['i'] = 0
         st.session_state['sound'] = ''
@@ -76,6 +70,7 @@ if 'panda' in st.session_state and not st.session_state['complete']:
     sample = st.session_state['panda']['random_id'][i]
     second = st.session_state['panda']['second'][i]
     video_link = st.session_state['panda']['link'][i].split('v=')[-1]
+    
     
     if st.session_state['sound'] == '':
         with st.spinner('Reading Audio File'):
@@ -114,8 +109,11 @@ if 'panda' in st.session_state and not st.session_state['complete']:
     upload_form = st.form('upload', clear_on_submit=True)
     left, middle, right = upload_form.columns(3)
     
-    speaker_upload = left.radio('Speaker', personality_choices)
-    gender_upload = middle.radio('Gender', ['Man', 'Woman', 'None'])
+    default_speaker = 0 if st.session_state['panda']['speaker_pred'][i] == 'missing' else personality_choices.index(st.session_state['panda']['speaker_pred'][i])
+    default_gender = 0 if st.session_state['panda']['gender_pred'][i] == 'missing' else ['Man', 'Woman', 'None'].index(st.session_state['panda']['gender_pred'][i])
+    
+    speaker_upload = left.radio('Speaker', personality_choices, index=default_speaker)
+    gender_upload = middle.radio('Gender', ['Man', 'Woman', 'None'], index=default_gender)
     slce = f'{st.session_state["restrict_channel"]}-{st.session_state["restrict_year"]}-{st.session_state["restrict_key"]}'        
     
     send = upload_form.form_submit_button()

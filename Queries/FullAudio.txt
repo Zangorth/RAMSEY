@@ -1,5 +1,0 @@
-SELECT audio.*
-FROM RAMSEY.dbo.AudioCoding AS audio
-RIGHT JOIN RAMSEY.dbo.metadata AS meta
-	ON audio.id = meta.id
-WHERE meta.seconds <= 900

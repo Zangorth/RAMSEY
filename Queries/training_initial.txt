@@ -1,0 +1,57 @@
+SET NOCOUNT ON
+
+SELECT channel, publish_date, random_id, [second]
+INTO #temp_table
+FROM ramsey.train
+UNION
+SELECT channel, publish_date, random_id, [second]-1
+FROM ramsey.train
+UNION
+SELECT channel, publish_date, random_id, [second]-2
+FROM ramsey.train
+UNION
+SELECT channel, publish_date, random_id, [second]-3
+FROM ramsey.train
+UNION
+SELECT channel, publish_date, random_id, [second]-4
+FROM ramsey.train
+UNION
+SELECT channel, publish_date, random_id, [second]-5
+FROM ramsey.train
+UNION
+SELECT channel, publish_date, random_id, [second]+1
+FROM ramsey.train
+UNION
+SELECT channel, publish_date, random_id, [second]+2
+FROM ramsey.train
+UNION
+SELECT channel, publish_date, random_id, [second]+3
+FROM ramsey.train
+UNION
+SELECT channel, publish_date, random_id, [second]+4
+FROM ramsey.train
+UNION
+SELECT channel, publish_date, random_id, [second]+5
+FROM ramsey.train
+
+
+SELECT slice, {}, 
+    DATEDIFF(MONTH, metadata.publish_date, GETDATE()) AS 'age', 
+    audio.*
+FROM #temp_table
+LEFT JOIN ramsey.train AS train
+    ON #temp_table.channel = train.channel
+    AND #temp_table.publish_date = train.publish_date
+	AND #temp_table.random_id = train.random_id
+    AND #temp_table.[second] = train.[second]
+LEFT JOIN ramsey.audio
+    ON #temp_table.channel = audio.channel
+    AND #temp_table.publish_date = audio.publish_date
+	AND #temp_table.random_id = audio.random_id
+    AND #temp_table.[second] = audio.[second]
+LEFT JOIN ramsey.metadata
+    ON #temp_table.channel = metadata.channel
+    AND #temp_table.publish_date = metadata.publish_date
+	AND #temp_table.random_id = metadata.random_id
+WHERE audio.random_id IS NOT NULL
+ORDER BY audio.channel, audio.publish_date, audio.random_id, audio.[second]
