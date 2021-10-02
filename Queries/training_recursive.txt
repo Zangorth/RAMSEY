@@ -1,7 +1,7 @@
 SET NOCOUNT ON
 
 SELECT channel, publish_date, random_id, [second]
-INTO #gender
+INTO #temp_table
 FROM ramsey.train
 UNION
 SELECT channel, publish_date, random_id, [second]-1
@@ -35,29 +35,29 @@ SELECT channel, publish_date, random_id, [second]+5
 FROM ramsey.train
 
 
-SELECT slice, gender, 
+SELECT slice, {}, 
     DATEDIFF(MONTH, metadata.publish_date, GETDATE()) AS 'age', 
-    speaker.speaker,
+	other.other,
     audio.*
-FROM #gender
+FROM #temp_table
 LEFT JOIN ramsey.train AS train
-    ON #gender.channel = train.channel
-    AND #gender.publish_date = train.publish_date
-	AND #gender.random_id = train.random_id
-    AND #gender.[second] = train.[second]
+    ON #temp_table.channel = train.channel
+    AND #temp_table.publish_date = train.publish_date
+	AND #temp_table.random_id = train.random_id
+    AND #temp_table.[second] = train.[second]
 LEFT JOIN ramsey.audio
-    ON #gender.channel = audio.channel
-    AND #gender.publish_date = audio.publish_date
-	AND #gender.random_id = audio.random_id
-    AND #gender.[second] = audio.[second]
+    ON #temp_table.channel = audio.channel
+    AND #temp_table.publish_date = audio.publish_date
+	AND #temp_table.random_id = audio.random_id
+    AND #temp_table.[second] = audio.[second]
 LEFT JOIN ramsey.metadata
-    ON #gender.channel = metadata.channel
-    AND #gender.publish_date = metadata.publish_date
-	AND #gender.random_id = metadata.random_id
-LEFT JOIN ramsey.speaker
-    ON #gender.channel = speaker.channel
-    AND #gender.publish_date = speaker.publish_date
-    AND #gender.random_id = speaker.random_id
-    AND #gender.[second] = speaker.[second]
+    ON #temp_table.channel = metadata.channel
+    AND #temp_table.publish_date = metadata.publish_date
+	AND #temp_table.random_id = metadata.random_id
+LEFT JOIN ramsey.other
+    ON #temp_table.channel = other.channel
+    AND #temp_table.publish_date = other.publish_date
+    AND #temp_table.random_id = other.random_id
+    AND #temp_table.[second] = other.[second]
 WHERE audio.random_id IS NOT NULL
 ORDER BY audio.channel, audio.publish_date, audio.random_id, audio.[second]

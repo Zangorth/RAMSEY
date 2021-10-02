@@ -1,0 +1,21 @@
+SELECT audio.channel, audio.publish_date, 
+    audio.random_id, audio.[second],
+    speaker.speaker, gender.gender,
+    metadata.link
+FROM ramsey.audio
+LEFT JOIN ramsey.speaker
+    ON audio.channel = speaker.channel
+    AND audio.publish_date = speaker.publish_date
+    AND audio.random_id = speaker.random_id
+    AND audio.second = speaker.second
+LEFT JOIN ramsey.gender
+    ON audio.channel = gender.channel
+    AND audio.publish_date = gender.publish_date
+    AND audio.random_id = gender.random_id
+    AND audio.second = gender.second
+LEFT JOIN ramsey.metadata
+    ON audio.channel = metadata.channel
+    AND audio.publish_date = metadata.publish_date
+    AND audio.random_id = metadata.random_id
+WHERE audio.channel IN {}
+    AND {} {}

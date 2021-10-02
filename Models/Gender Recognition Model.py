@@ -2,10 +2,7 @@ from sklearn.model_selection import train_test_split as split
 from sklearn.linear_model import LogisticRegression
 from sklearn.exceptions import ConvergenceWarning
 from helpers.cross_validation import CV
-from sklearn.decomposition import PCA
 from sklearn.metrics import f1_score
-from sklearn.cluster import KMeans
-from sklearn import preprocessing
 from helpers import arbitraryNN
 from functools import partial
 from ramsey import ramsey
@@ -24,58 +21,39 @@ warnings.filterwarnings(action='ignore', category=UserWarning)
 device = torch.device('cuda:0')
 
 local, optimize = True, False
-username = 'zangorth'
-password = open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\password.txt', 'r').read()
+model = 'speaker'
+other = 'speaker' if model == 'gender' else 'gender'
 
 #############
 # Read Data #
 #############
-if local:
-    connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
-                         'Server=ZANGORTH;DATABASE=HomeBase;' +
-                         'Trusted_Connection=yes;')
-else:
-    connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
-                         'Server=zangorth.database.windows.net;DATABASE=HomeBase;' +
-                         f'UID={username};PWD={password};')
+connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
+                     'Server=ZANGORTH;DATABASE=HomeBase;' +
+                     'Trusted_Connection=yes;')
 con = sql.connect(connection_string)
-query = open('Queries\\GenderTraining.txt').read()
+query = open('Queries\\training_recursive.txt').read().format(model).replace('other', other)
 panda = pd.read_sql(query, con)
 con.close()
 
 ##############
 # Clean Data #
 ##############
-panda['y'] = panda['gender'].astype('category').cat.codes
+panda['y'] = panda[model].astype('category').cat.codes
 y = panda['y']
 slices = panda['slice']
 
-mapped = panda[['y', 'gender']].drop_duplicates().reset_index(drop=True)
+mapped = panda[['y', model]].drop_duplicates().reset_index(drop=True)
 mapped = mapped.loc[mapped.y != -1].sort_values('y').reset_index(drop=True)
-
-x = panda.drop(['channel', 'publish_date', 'random_id', 'second', 'gender', 'y', 'slice'], axis=1)
-
-scaler = preprocessing.StandardScaler().fit(x)
-pickle.dump(scaler, open('Pickles/gender_scaler.pkl', 'wb'))
-x = pd.DataFrame(scaler.transform(x), columns=x.columns)
-
-pca = PCA(4).fit(x)
-pickle.dump(pca, open('Pickles/gender_pca.pkl', 'wb'))
-x_pca = np.argmax(pca.transform(x), axis=1)
-
-km = KMeans(6).fit(x)
-pickle.dump(km, open('Pickles/gender_km.pkl', 'wb'))
-x_km = np.argmax(km.transform(x), axis=1)
 
 ############
 # Pipeline #
 ############
-def pipeline(dataframe, lags, leads, channels):
-    scaler = pickle.load(open('Pickles/gender_scaler.pkl', 'rb'))
-    pca = pickle.load(open('Pickles/gender_pca.pkl', 'rb'))
-    km = pickle.load(open('Pickles/gender_km.pkl', 'rb'))
+def pipeline(dataframe, lags, leads, channels, modelled_features):
+    scaler = pickle.load(open('Pickles/scaler.pkl', 'rb'))
+    pca = pickle.load(open('Pickles/pca.pkl', 'rb'))
+    km = pickle.load(open('Pickles/km.pkl', 'rb'))
     
-    x = dataframe.drop(['channel', 'publish_date', 'random_id', 'second'], axis=1)
+    x = dataframe.drop(['channel', 'publish_date', 'random_id', 'second', modelled_features.name], axis=1)
     
     x = pd.DataFrame(scaler.transform(x), columns=x.columns)
     x_pca = np.argmax(pca.transform(x), axis=1)
@@ -87,6 +65,9 @@ def pipeline(dataframe, lags, leads, channels):
         
     for channel in channels:
         x[f'channel_{channel}'] = np.where(x['channel'] == channel, 1, 0)
+        
+    for feature in set(modelled_features):
+        x[f'model_{feature}'] = np.where(dataframe[modelled_features.name] == feature, 1, 0)
     
     x['pca'] = x_pca
     x['km'] = x_km    
@@ -109,7 +90,7 @@ def ramsey_split(x, y, slices):
 ####################
 # Optimize Network #
 ####################
-x = panda.drop(['gender', 'y', 'slice'], axis=1)
+x = panda.drop([model, 'y', 'slice'], axis=1)
 
 starts, calls = 20, 100
 kwargs_out = None
@@ -133,7 +114,7 @@ space = space + [skopt.space.Integer(2**2, 2**10, name=f'neuron_{i}') for i in r
 i = 0
 @skopt.utils.use_named_args(space)
 def net(model, lags, leads, km, pca, over=False, **kwargs):
-    lx = pipeline(x, lags, leads, set(x['channel']))
+    lx = pipeline(x, lags, leads, set(x['channel']), x[other])
     lx = lx.loc[y != -1].drop(['channel', 'publish_date', 'random_id'], axis=1).dropna()
     ly = y.loc[lx.index]
     
@@ -185,14 +166,14 @@ if optimize:
     
     print(results)
     
-    pickle.dump(results, open('Pickles/gender_results.pkl', 'wb'))
+    pickle.dump(results, open('Pickles/speaker_results.pkl', 'wb'))
 else:
-    results = pickle.load(open('Pickles/gender_results.pkl', 'rb'))
+    results = pickle.load(open('Pickles/speaker_results.pkl', 'rb'))
     
 ####################
 # Validate Network #
 ####################
-x = pipeline(x, results['lags'], results['leads'], set(panda['channel']))
+x = pipeline(x, results['lags'], results['leads'], set(panda['channel']), panda[other])
 x = x.loc[y != -1].drop(['channel', 'publish_date', 'random_id'], axis=1).dropna()
 y = y.loc[x.index]
 slices = slices.loc[x.index]
@@ -213,15 +194,16 @@ elif results['model'] == 'logit':
     discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
 
 f1 = partial(f1_score, average=None)
-splitter = partial(ramsey_split, slices=slices)
+splitter = partial(split, test_size=0.15, stratify=y)
 validator = CV(discriminator, f1, splitter)
-avg = pd.DataFrame(validator.cv(x, y, over=True, full=True), columns=mapped['gender'])
+avg = pd.DataFrame(validator.cv(x, y, over=True, full=True), columns=mapped[model])
 
 f1 = partial(f1_score, average='macro')
+splitter = partial(ramsey_split, slices=slices)
 validator = CV(discriminator, f1, splitter)
 
-print(f'F1 Macro: {validator.cv(x, y, cv=100, over=True)}\n')
-print(avg.mean())
+print(f'F1 Macro: {avg.mean().mean()}\n')
+print(f'{avg.mean()}\n')
 
 ###############
 # Predictions #
@@ -235,41 +217,62 @@ elif results['model'] == 'logit':
     
 discriminator.fit(x, y)
 
-if local:
-    connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
-                         'Server=ZANGORTH;DATABASE=HomeBase;' +
-                         'Trusted_Connection=yes;')
-else:
-    connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
-                         'Server=zangorth.database.windows.net;DATABASE=HomeBase;' +
-                         f'UID={username};PWD={password};')
+connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
+                     'Server=ZANGORTH;DATABASE=HomeBase;' +
+                     'Trusted_Connection=yes;')
 con = sql.connect(connection_string)
+csr = con.cursor()
 query = '''SELECT channel, publish_date, random_id FROM ramsey.metadata'''
 iterations = pd.read_sql(query, con)
+csr.execute(open('Queries\\create_recursive.txt').read().replace('model', model))
+csr.commit()
+
 
 for i in range(len(iterations)):
     print(f'{i}/{len(iterations)}')
     query = f'''
-    SELECT DATEDIFF(MONTH, metadata.publish_date, GETDATE()) AS 'age', audio.*
+    SELECT DATEDIFF(MONTH, metadata.publish_date, GETDATE()) AS 'age', 
+        {other},
+        audio.*
     FROM ramsey.audio
     LEFT JOIN ramsey.metadata
         ON audio.channel = metadata.channel
         AND audio.publish_date = metadata.publish_date
         AND audio.random_id = metadata.random_id
+    LEFT JOIN ramsey.{other}
+        ON audio.channel = {other}.channel
+        AND audio.publish_date = {other}.publish_date
+        AND audio.random_id = {other}.random_id
+        AND audio.[second] = {other}.[second]
     WHERE audio.channel = '{iterations['channel'][i]}' 
         AND audio.publish_date = '{iterations['publish_date'][i]}'
         AND audio.random_id = {iterations['random_id'][i]}
     '''
     
     data = pd.read_sql(query, con)
-    data_x = pipeline(data, results['lags'], results['leads'], set(panda['channel']))
+    data_x = pipeline(data, results['lags'], results['leads'], set(panda['channel']), panda[other])
     data_x = data_x.drop(['channel', 'publish_date', 'random_id'], axis=1).dropna()
     
     preds = pd.DataFrame({'y': discriminator.predict(data_x)}, index=data_x.index)
     preds = preds.merge(mapped, how='left', on='y').drop('y', axis=1)
     
     new = data[['channel', 'publish_date', 'random_id', 'second']].merge(preds, left_index=True, right_index=True)
+
+    ramsey.upload(new, 'ramsey', model)
     
-    ramsey.upload(new, 'ramsey', 'gender')
+query = '''
+DROP TABLE ramsey.model
+
+SELECT *
+INTO ramsey.model
+FROM ramsey.model_recursive
+
+CREATE CLUSTERED INDEX IX_model
+ON ramsey.model_recursive(channel, publish_date, random_id, [second])
+'''
+
+csr.execute(query.replace('model', model))
+csr.commit()
+    
     
 con.close()

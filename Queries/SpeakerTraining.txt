@@ -1,52 +1,57 @@
 SET NOCOUNT ON
 
-SELECT id, [second], [source]
-INTO #speakers
-FROM RAMSEY.training.Speaker
+SELECT channel, publish_date, random_id, [second]
+INTO #speaker
+FROM ramsey.train
 UNION
-SELECT id, [second]-1, [source]
-FROM RAMSEY.training.Speaker
+SELECT channel, publish_date, random_id, [second]-1
+FROM ramsey.train
 UNION
-SELECT id, [second]-2, [source]
-FROM RAMSEY.training.Speaker
+SELECT channel, publish_date, random_id, [second]-2
+FROM ramsey.train
 UNION
-SELECT id, [second]-3, [source]
-FROM RAMSEY.training.Speaker
+SELECT channel, publish_date, random_id, [second]-3
+FROM ramsey.train
 UNION
-SELECT id, [second]-4, [source]
-FROM RAMSEY.training.Speaker
+SELECT channel, publish_date, random_id, [second]-4
+FROM ramsey.train
 UNION
-SELECT id, [second]-5, [source]
-FROM RAMSEY.training.Speaker
+SELECT channel, publish_date, random_id, [second]-5
+FROM ramsey.train
 UNION
-SELECT id, [second]+1, [source]
-FROM RAMSEY.training.Speaker
+SELECT channel, publish_date, random_id, [second]+1
+FROM ramsey.train
 UNION
-SELECT id, [second]+2, [source]
-FROM RAMSEY.training.Speaker
+SELECT channel, publish_date, random_id, [second]+2
+FROM ramsey.train
 UNION
-SELECT id, [second]+3, [source]
-FROM RAMSEY.training.Speaker
+SELECT channel, publish_date, random_id, [second]+3
+FROM ramsey.train
 UNION
-SELECT id, [second]+4, [source]
-FROM RAMSEY.training.Speaker
+SELECT channel, publish_date, random_id, [second]+4
+FROM ramsey.train
 UNION
-SELECT id, [second]+5, [source]
-FROM RAMSEY.training.Speaker
+SELECT channel, publish_date, random_id, [second]+5
+FROM ramsey.train
 
-SELECT speaker , YEAR(publish_date) AS 'publish_year', 
-    DATENAME(DW, publish_date) AS 'dow', 
-    CONCAT(YEAR(publish_date),'-',  DATENAME(DW, publish_date)) AS 'interaction',
-    #speakers.[source], code.*
-FROM #speakers
-LEFT JOIN RAMSEY.training.Speaker AS train
-    ON #speakers.id = train.id
-    AND #speakers.[second] = train.[second]
-LEFT JOIN RAMSEY.dbo.AudioCoding AS code
-    ON #speakers.id = code.id
-    AND #speakers.[second] = code.[second]
-LEFT JOIN RAMSEY.dbo.metadata AS meta
-    ON #speakers.id = meta.id
-WHERE code.id IS NOT NULL
-    AND #speakers.[source] != 'test'
-ORDER BY id, [second]
+
+SELECT slice, speaker, 
+    DATEDIFF(MONTH, metadata.publish_date, GETDATE()) AS 'age', 
+    audio.*
+FROM #speaker
+LEFT JOIN ramsey.train AS train
+    ON #speaker.channel = train.channel
+    AND #speaker.publish_date = train.publish_date
+	AND #speaker.random_id = train.random_id
+    AND #speaker.[second] = train.[second]
+LEFT JOIN ramsey.audio
+    ON #speaker.channel = audio.channel
+    AND #speaker.publish_date = audio.publish_date
+	AND #speaker.random_id = audio.random_id
+    AND #speaker.[second] = audio.[second]
+LEFT JOIN ramsey.metadata
+    ON #speaker.channel = metadata.channel
+    AND #speaker.publish_date = metadata.publish_date
+	AND #speaker.random_id = metadata.random_id
+WHERE audio.random_id IS NOT NULL
+ORDER BY audio.channel, audio.publish_date, audio.random_id, audio.[second]
