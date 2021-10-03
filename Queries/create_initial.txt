@@ -1,0 +1,12 @@
+DROP TABLE ramsey.model
+
+CREATE TABLE ramsey.model (
+    channel VARCHAR(10),
+    publish_date DATE,
+    random_id INT, 
+    second SMALLINT,
+    model VARCHAR(10)
+)
+
+CREATE CLUSTERED INDEX IX_model
+ON ramsey.model_recursive(channel, publish_date, random_id, [second])

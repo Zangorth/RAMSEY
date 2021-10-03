@@ -24,7 +24,7 @@ warnings.filterwarnings(action='ignore', category=UserWarning)
 device = torch.device('cuda:0')
 
 local, optimize = True, True
-model = 'gender'
+model = 'speaker'
 
 #############
 # Read Data #
@@ -105,7 +105,7 @@ def ramsey_split(x, y, slices):
 ####################
 x = panda.drop([model, 'y', 'slice'], axis=1)
 
-starts, calls = 20, 100
+starts, calls = 20, 50
 kwargs_out = None
 
 max_shift = 5
@@ -179,9 +179,9 @@ if optimize:
     
     print(results)
     
-    pickle.dump(results, open('Pickles/speaker_results.pkl', 'wb'))
+    pickle.dump(results, open(f'Pickles/{model}_results.pkl', 'wb'))
 else:
-    results = pickle.load(open('Pickles/speaker_results.pkl', 'rb'))
+    results = pickle.load(open(f'Pickles/{model}_results.pkl', 'rb'))
     
 ####################
 # Validate Network #
@@ -207,16 +207,12 @@ elif results['model'] == 'logit':
     discriminator = LogisticRegression(max_iter=500, fit_intercept=False)
 
 f1 = partial(f1_score, average=None)
-splitter = partial(split, test_size=0.15, stratify=y)
+splitter = partial(ramsey_split, slices=slices)
 validator = CV(discriminator, f1, splitter)
 avg = pd.DataFrame(validator.cv(x, y, over=True, full=True), columns=mapped[model])
 
-f1 = partial(f1_score, average='macro')
-splitter = partial(ramsey_split, slices=slices)
-validator = CV(discriminator, f1, splitter)
-
-print(f'F1 Macro: {validator.cv(x, y, cv=100, over=True)}\n')
-print(avg.mean())
+print(f'F1 Macro: {avg.mean().mean()}\n')
+print(f'{avg.mean()}\n')
 
 ###############
 # Predictions #
@@ -234,12 +230,14 @@ connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' +
                      'Server=ZANGORTH;DATABASE=HomeBase;' +
                      'Trusted_Connection=yes;')
 con = sql.connect(connection_string)
+csr = con.cursor()
 query = '''SELECT channel, publish_date, random_id FROM ramsey.metadata'''
 iterations = pd.read_sql(query, con)
-first = True
+csr.execute(open('Queries\\create_initial.txt').read().replace('model', model))
+csr.commit()
 
 for i in range(len(iterations)):
-    print(f'{i}/{len(iterations)}')
+    print(f'{i+1}/{len(iterations)}')
     query = f'''
     SELECT DATEDIFF(MONTH, metadata.publish_date, GETDATE()) AS 'age', audio.*
     FROM ramsey.audio
@@ -260,11 +258,7 @@ for i in range(len(iterations)):
     preds = preds.merge(mapped, how='left', on='y').drop('y', axis=1)
     
     new = data[['channel', 'publish_date', 'random_id', 'second']].merge(preds, left_index=True, right_index=True)
-    
-    if first:
-        ramsey.upload(new, 'ramsey', model, exists='replace')
-        first = False
-    else:
-        ramsey.upload(new, 'ramsey', model)
+
+    ramsey.upload(new, 'ramsey', model)
     
 con.close()
