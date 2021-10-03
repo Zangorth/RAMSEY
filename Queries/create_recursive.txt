@@ -8,5 +8,5 @@ CREATE TABLE ramsey.model_recursive (
     model VARCHAR(10)
 )
 
-CREATE CLUSTERED INDEX IX_model
+CREATE CLUSTERED INDEX IX_model_recursive
 ON ramsey.model_recursive(channel, publish_date, random_id, [second])
