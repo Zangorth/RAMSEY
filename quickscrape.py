@@ -45,60 +45,59 @@ def encode_audio(sound):
 ###############
 # Scrape Data #
 ###############
-personality = 'ao'
+personalities = {'ramsey': 'https://www.youtube.com/watch?v=j3NNJxYb9Sg&list=UU7eBNeDW1GQf2NJQ6G6gAxw',
+                 'deloney': 'https://www.youtube.com/watch?v=ud3krvLD1bo&list=UU4HiMKM8WLcNbt9ae_XNRNQ',
+                 'coleman': 'https://www.youtube.com/watch?v=PRNZ199_ax4&list=UU0tVfiyBpMOQLA3FAanPGJA',
+                 'ao': 'https://www.youtube.com/watch?v=iE2yBe21-eA&list=PLPIXh_zvJ-4AEupWXKvlPQF2NFDQceoro',
+                 'cruze': 'https://www.youtube.com/watch?v=-XU-xOg3pHM&list=UUt59W0ScV709iwy2h-oiulQ',
+                 'wright': 'https://www.youtube.com/watch?v=zhp-1T1na8Q&list=UU1CHQyZ5-MTJzuSCvSVw_qg',
+                 'kamel': 'https://www.youtube.com/watch?v=NXCsCMSWfiI&list=UUKFrkFOwmiXMuZtQJXuG5OQ'}
 
-personalities = {'ramsey': 'https://www.youtube.com/watch?v=0JUw1agDjoA&list=UU7eBNeDW1GQf2NJQ6G6gAxw&index=2',
-                 'deloney': 'https://www.youtube.com/watch?v=_wWc1Tc19qA&list=UU4HiMKM8WLcNbt9ae_XNRNQ&index=2',
-                 'coleman': 'https://www.youtube.com/watch?v=aKRSyxnE3C4&list=UU0tVfiyBpMOQLA3FAanPGJA&index=2',
-                 'ao': 'https://www.youtube.com/watch?v=adTnzyz7deI&list=UUaW51g-nmLfq703TPZC7Gsg&index=2',
-                 'cruze': 'https://www.youtube.com/watch?v=PvwDX69CsAQ&list=UUt59W0ScV709iwy2h-oiulQ&index=2',
-                 'wright': 'https://www.youtube.com/watch?v=bdXVQGZtYy4&list=UU1CHQyZ5-MTJzuSCvSVw_qg&index=2',
-                 'kamel': 'https://www.youtube.com/watch?v=u5ufvVsaW4M&list=UUKFrkFOwmiXMuZtQJXuG5OQ&index=2'}
-
-audio_location = f'C:\\Users\\Samuel\\Google Drive\\Portfolio\\Ramsey\\Audio\\Audio Full\\{personality}'
-transcript_location = f'C:\\Users\\Samuel\\Google Drive\\Portfolio\\Ramsey\\Audio\\Transcript\\{personality}'
-
-videos = Playlist(personalities[personality]).video_urls
-videos = list(videos)
-
-connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
-                     'Server=ZANGORTH;DATABASE=HomeBase;' +
-                     'Trusted_Connection=yes;')
-con = sql.connect(connection_string)
-query = 'SELECT * FROM ramsey.metadata'
-collected = pd.read_sql(query, con)
-columns = pd.read_sql('SELECT TOP 1 * FROM ramsey.audio', con).columns
-con.close()
-
-videos = list(set(videos) - set(collected['link']))
-video_link = videos[0]
-
-ray.init(num_cpus=16)
-i = 1
-for video_link in videos:
-    print(f'{i}/{len(videos)}')
-    i += 1
+for personality in list(personalities.keys()):
+    audio_location = f'C:\\Users\\Samuel\\Google Drive\\Portfolio\\Ramsey\\Audio\\Audio Full\\{personality}'
+    transcript_location = f'C:\\Users\\Samuel\\Google Drive\\Portfolio\\Ramsey\\Audio\\Transcript\\{personality}'
     
-    try:
-        new = ramsey.Scrape(video_link, audio_location, transcript_location)
-        metadata = new.metadata()
-        new.audio()
-        new.transcript()
-        
-    except Exception:
-        metadata = ''
+    videos = Playlist(personalities[personality]).video_urls
+    videos = list(videos)
     
-    if type(metadata) != str:
-        iterables = new.iterables()
-        iterables = [[personality, metadata.publish_date.item(), metadata.random_id.item(), sound[0], sound[1]] for sound in iterables]
+    connection_string = ('DRIVER={ODBC Driver 17 for SQL Server};' + 
+                         'Server=ZANGORTH;DATABASE=HomeBase;' +
+                         'Trusted_Connection=yes;')
+    con = sql.connect(connection_string)
+    query = 'SELECT * FROM ramsey.metadata'
+    collected = pd.read_sql(query, con)
+    columns = pd.read_sql('SELECT TOP 1 * FROM ramsey.audio', con).columns
+    con.close()
+    
+    videos = list(set(videos) - set(collected['link']))
+    video_link = videos[0]
+    
+    ray.init(num_cpus=16)
+    i = 1
+    for video_link in videos:
+        print(f'{personality}: {i}/{len(videos)}')
+        i += 1
         
-        audio_coding = ray.get([encode_audio.remote(sound) for sound in iterables])
-        audio_coding = pd.concat(audio_coding)
-        audio_coding.columns = columns
-
-        metadata['seconds'] = audio_coding['second'].max()
+        try:
+            new = ramsey.Scrape(video_link, audio_location, transcript_location)
+            metadata = new.metadata()
+            new.audio()
+            new.transcript()
+            
+        except Exception:
+            metadata = ''
         
-        ramsey.upload(metadata, 'ramsey', 'metadata')
-        ramsey.upload(audio_coding, 'ramsey', 'audio')
-        
-ray.shutdown()
+        if type(metadata) != str:
+            iterables = new.iterables()
+            iterables = [[personality, metadata.publish_date.item(), metadata.random_id.item(), sound[0], sound[1]] for sound in iterables]
+            
+            audio_coding = ray.get([encode_audio.remote(sound) for sound in iterables])
+            audio_coding = pd.concat(audio_coding)
+            audio_coding.columns = columns
+    
+            metadata['seconds'] = audio_coding['second'].max()
+            
+            ramsey.upload(metadata, 'ramsey', 'metadata')
+            ramsey.upload(audio_coding, 'ramsey', 'audio')
+            
+    ray.shutdown()
