@@ -1,9 +1,8 @@
-pandas
-numpy
-SQLAlchemy
-pytube
-pyodbc
-youtube_transcript_api
 librosa
+numpy
+pandas
 pydub
-streamlit
+pyodbc
+pytube
+SQLAlchemy
+youtube_transcript_api

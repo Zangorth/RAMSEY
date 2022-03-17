@@ -146,6 +146,33 @@ class Scrape():
             features.iloc[0, 0:3] = [self.personality, self.publish_date, self.random_id, second]
         
         return features
+    
+################
+# Encode Audio #
+################
+def encode_audio(channel, publish_date, random_id, second, sound):
+    warnings.filterwarnings('ignore')
+    
+    try:
+        y, rate = librosa.load(sound.export(format='wav'), res_type='kaiser_fast')
+        mfccs = np.mean(librosa.feature.mfcc(y, rate, n_mfcc=40).T,axis=0)
+        stft = np.abs(librosa.stft(y))
+        chroma = np.mean(librosa.feature.chroma_stft(S=stft, sr=rate).T,axis=0)
+        mel = np.mean(librosa.feature.melspectrogram(y, sr=rate).T,axis=0)
+        contrast = np.mean(librosa.feature.spectral_contrast(S=stft, sr=rate).T,axis=0)
+        tonnetz = np.mean(librosa.feature.tonnetz(y=librosa.effects.harmonic(y), sr=rate).T,axis=0)
+        
+        features = list(mfccs) + list(chroma) + list(mel) + list(contrast) + list(tonnetz)
+        features = [float(f) for f in features]
+        features = [channel, publish_date, random_id, second] + features
+        
+        features = pd.DataFrame([features])
+    
+    except Exception:
+        features = pd.DataFrame(index=[0])
+        features.iloc[0, 0:3] = [channel, publish_date, random_id, second]
+    
+    return features
 
 ###############
 # Upload Data #

@@ -1,4 +1,11 @@
+import pathlib
 from setuptools import setup
+
+HERE = pathlib.Path(__file__).parent
+
+README = (HERE / 'README.md').read_text()
+REQS = (HERE / 'requirements.txt').read_text()
+
 
 setup(
       name='zangorth-ramsey',
@@ -6,5 +13,5 @@ setup(
       description='Helper Functions for Ramsey Project',
       author='Zangorth',
       packages=['ramsey'],
-      install_requires=open(r'C:\Users\Samuel\Google Drive\Portfolio\Ramsey\helper_functions\requirements.txt', 'r').read().split('\n')[0:-1]
+      install_requires=REQS.split('\n')[0:-1]
       )
